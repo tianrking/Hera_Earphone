@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(isd_download.exe:*)",
+      "Bash(./isd_download.exe:*)",
+      "Bash(ls:*)",
+      "Bash(./download_app_ota.bat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
