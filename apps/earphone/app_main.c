@@ -315,7 +315,7 @@ void app_main()
     set_charge_event_flag(1);
 #endif
 
-    bt_modify_name("Buddie");
+    bt_modify_name("Hera");
     if (!pca_task_is_open) {
         pca_open();
         pca_task_is_open = true;

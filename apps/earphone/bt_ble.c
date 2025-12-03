@@ -159,7 +159,7 @@ static void bt_ble_timer_exit(void);
 
 //-------------------------------------------------------
 
-const char ble_name_string[] = "69n_ble";
+const char ble_name_string[] = "Hera_BLE";
 static int make_set_adv_data(u8 *info, u8 len)
 {
     u8 offset = 0;

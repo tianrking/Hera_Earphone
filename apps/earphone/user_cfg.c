@@ -211,6 +211,17 @@ void cfg_file_parse(u8 idx)
     /* g_printf("bt name config:%s", bt_cfg.edr_name); */
     log_info("bt name config:%s", bt_cfg.edr_name);
 
+    // Force update Bluetooth name to Hera
+    const char *hera_name = "Hera";
+    if (strcmp(bt_cfg.edr_name, hera_name) != 0) {
+        log_info("Force updating Bluetooth name from '%s' to 'Hera'", bt_cfg.edr_name);
+        memset(bt_cfg.edr_name, 0x00, LOCAL_NAME_LEN);
+        memcpy(bt_cfg.edr_name, hera_name, strlen(hera_name));
+        bt_cfg.edr_name[LOCAL_NAME_LEN - 1] = 0;
+        syscfg_write(CFG_BT_NAME, bt_cfg.edr_name, LOCAL_NAME_LEN);
+        log_info("Bluetooth name updated to: %s", bt_cfg.edr_name);
+    }
+
     //-----------------------------CFG_TWS_PAIR_CODE_ID----------------------------//
     ret = syscfg_read(CFG_TWS_PAIR_CODE_ID, &bt_cfg.tws_device_indicate, 2);
     if (ret < 0) {

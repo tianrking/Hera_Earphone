@@ -82,7 +82,7 @@ CFLAGS := \
 	-fprefer-gnu-section \
 	-Wno-shift-negative-value \
 	-Wundef \
-	-Wframe-larger-than=256 \
+	-Wframe-larger-than=512 \
 	-Wincompatible-pointer-types \
 	-Wreturn-type \
 	-Wimplicit-function-declaration \
@@ -640,7 +640,7 @@ LFLAGS := \
 	--plugin-opt=-dont-used-symbol-list=malloc,free,sprintf,printf,puts,putchar \
 	--plugin-opt=save-temps \
 	--plugin-opt=-pi32v2-enable-rep-memop \
-	--plugin-opt=-warn-stack-size=256 \
+	--plugin-opt=-warn-stack-size=512 \
 	--sort-common \
 	--plugin-opt=-used-symbol-file=cpu/br28/sdk_used_list.used \
 	--plugin-opt=-pi32v2-large-program=true \

@@ -1,69 +1,64 @@
-<p align="center">
-  <a href="README.md">English</a> | <a href="README.zh_CN.md">简体中文</a>
-</p>
+# Hera-Firmware-JL701N
 
-# Buddie-Firmware-JL701N
+基于Buddie项目二次开发的Hera耳机固件，适用于基于杰理AC701N芯片的开发板。本固件解决方案专为**低功耗实时音频传输**而设计，并内置高效的音频压缩模块。
 
-This repository contains the firmware source code and technical documentation for Buddie AI headphones, suitable for development boards based on the JieLi AC701N chip. This firmware solution is specifically designed for **low-power real-time audio transmission** and features a built-in efficient audio compression module.
+## 📚 杰理官方文档
 
-When used together with our open-source mobile AI application, the following core functions can be achieved:
+### AC701N 芯片 Datasheet
+包含芯片的电气特性、引脚定义、功能模块等核心硬件信息。(通常包含在 SDK 包中或需从杰理获取)
 
-- Real-time transcription of spoken content
-- Voice interaction with the AI assistant via the headphones
-- Transcription of both your own and others' speech during online meetings
+### AC701N SDK 开发手册
+详细说明 SDK 架构、API 接口、外设驱动、BLE 协议栈使用、开发流程等。(SDK 包中最重要的文档)
 
-## 🛠 System Requirements
+请查看仓库根目录下的 doc/html 文件夹获取详细的项目文档。
 
-- **Operating System:** Windows 10 or later (64-bit system recommended)
-- **Hardware:** 
-  - JieLi AC701N development board
-  - Forced download tool
-- **Other:** USB **data cable** (type-A)
+## 🛠 Hera项目新增功能
 
-## 📚 Preparation
+基于Buddie二次开发，新增以下功能：
 
-For this project, we recommend using VSCode for compilation in a Windows environment. The environment setup process is as follows:
+### 获取麦克风数据
+- 实时获取麦克风输入数据
+- 支持多通道麦克风采集
 
-1. [Configure the development environment on Windows](#1-configure-windows-development-environment)  
-2. [Development environment in VSCode](#2-build-sdk-in-vscode)
-3. [Burn firmware using the forced download tool](#3-burn-firmware-using-the-forced-download-tool)
+### 获取扬声器数据
+- 获取音频输出数据
+- 支持音频数据监控和分析
 
-### 1 Configure Windows Development Environment
+### 新建的任务进程
+- **pca**: 主成分分析任务进程
+- **vad_task**: 语音活动检测任务进程
 
-This SDK project is designed **specifically for Windows systems** and uses **Code::Blocks** as the default development environment.
+### 数据处理及压缩
+- 音频数据实时处理
+- 高效数据压缩算法
+- 优化传输带宽
 
-The entire configuration process is divided into three main steps:
+### 快速傅里叶变换
+- 音频频谱分析
+- 实时FFT处理
+- 频域特征提取
 
-1. **Download and install [the Windows version of Code::Blocks](https://pkgman.jieliapp.com/s/codeblocks)**
+### 蓝牙数据发送
+#### 通过BLE进行发送数据
+- 低功耗蓝牙传输
+- 自定义BLE服务
+- 数据包优化传输
 
-2. **Open Code::Blocks for the first time and close it immediately**  
-   This operation will generate the necessary configuration files for subsequent development.
+#### 通过SPP进行发送数据
+- 串口端口协议传输
+- 经典蓝牙SPP配置
+- 高速数据传输通道
 
-3. **Download and install [the latest JieLi Windows toolchain](https://pkgman.jieliapp.com/s/win-toolchain)**  
-   [Click here to download]
+### 其他小功能
+#### 修改经典蓝牙/BLE广播名称
+- 动态修改设备名称
+- 支持多语言广播名称
 
-After completing the above steps, you can open the Code::Blocks project and start compiling and developing. (It is recommended to use VSCode for compilation and development.)
+#### 调整/锁定芯片主频
+- 动态频率调整
+- 性能与功耗平衡
 
-If you need more toolchains and post-processing tools, please refer to: **[Latest tool versions](https://doc.zh-jieli.com/Tools/zh-cn/other_info/index.html)**.
-
-For more detailed information about development tools, please click the link below:  
-https://doc.zh-jieli.com/Tools/zh-cn/dev_tools/dev_env/index.html
-
-### 2 Build SDK in VSCode
-
-Building in VSCode is done by invoking the `make` command.
-
-#### 2.1 Open the project in VSCode at the SDK root directory
-<p align="center">
-  <img src="../image/firmware/firmware_open_vscode.jpg" width="400" />
-</p>
-
-#### 2.2 Install the necessary extensions: **Task Explorer** and **C/C++**
-
-<p align="center">
-  <img src="../image/firmware/firmware_vscode_task.jpg" width="400" />
-</p>
-
-<p align="center">
-  <img src="../image/firmware/firmware_vscode_c_cpp_ext.jpg" width="400" />
-</p>
+#### 修改BLE characteristics
+- 自定义BLE特征值
+- 服务配置优化
+- 数据格式定义
