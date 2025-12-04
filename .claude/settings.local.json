@@ -5,7 +5,8 @@
       "Bash(isd_download.exe:*)",
       "Bash(./isd_download.exe:*)",
       "Bash(ls:*)",
-      "Bash(./download_app_ota.bat:*)"
+      "Bash(./download_app_ota.bat:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []
