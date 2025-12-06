@@ -142,11 +142,70 @@ const struct task_info task_info_table[] = {
 
     {"pca",                 1,      0,  256,   128  },
     {"vad_task",            1,      0,  256,   128  },
+    {"pa6_key_polling",     7,      0,  256,   128  },
     {0, 0},
 };
 
 
 APP_VAR app_var;
+
+// 定义PA6按键引脚
+#define KEY_PA6_PIN    IO_PORTA_06
+
+// PA6按键检测初始化
+void pa6_key_init(void)
+{
+    // 初始化 PA6 为输入模式，开启内部上拉
+    gpio_set_direction(KEY_PA6_PIN, 1);  // 设置为输入
+    gpio_set_pull_up(KEY_PA6_PIN, 1);    // 开启上拉
+    gpio_set_die(KEY_PA6_PIN, 1);        // 数字输入使能
+
+    printf("PA6 key initialized\n");
+    log_info("PA6 key initialized\n");
+}
+
+// PA6按键检测任务 - 优化的轮询方式
+static void pa6_key_polling_task_handle(void *p)
+{
+    printf("PA6 key task started\n");
+    log_info("PA6 key task started\n");
+
+    pa6_key_init();
+
+    u8 last_key_state = 1;  // 上次按键状态，默认为高电平（未按下）
+    u8 stable_count = 0;    // 稳定计数器
+    u8 key_pressed = 0;     // 按键按下标志
+
+    while (1) {
+        u8 current_state = gpio_read(KEY_PA6_PIN);
+
+        // 状态变化检测
+        if (current_state != last_key_state) {
+            stable_count++;
+
+            // 需要连续5次检测到相同状态才认为稳定（消抖）
+            if (stable_count >= 5) {
+                if (current_state == 0 && !key_pressed) {
+                    // 按键按下
+                    key_pressed = 1;
+                    printf("Key PA6 Pressed!\n");
+                    log_info("Key PA6 Pressed!\n");
+                } else if (current_state == 1 && key_pressed) {
+                    // 按键释放
+                    key_pressed = 0;
+                    printf("Key PA6 Released!\n");
+                    log_info("Key PA6 Released!\n");
+                }
+                last_key_state = current_state;
+                stable_count = 0;
+            }
+        } else {
+            stable_count = 0;  // 状态稳定，重置计数器
+        }
+
+        os_time_dly(5);  // 5ms检测一次，降低CPU占用
+    }
+}
 
 /*
  * 2ms timer中断回调函数
@@ -247,6 +306,7 @@ void app_main()
 
 
     log_info("app_main\n");
+    log_info("w0x7ce_fix_01_app_main\n");
     app_var.start_time = timer_get_ms();
 
 #if (defined(CONFIG_MEDIA_NEW_ENABLE) || (defined(CONFIG_MEDIA_DEVELOP_ENABLE)))
@@ -325,6 +385,9 @@ void app_main()
         bone_task_init();
         bone_task_is_open = true;
     }
+
+    // 创建 PA6 按键检测任务
+    task_create(pa6_key_polling_task_handle, NULL, "pa6_key_polling");
 }
 
 int __attribute__((weak)) eSystemConfirmStopStatus(void)
