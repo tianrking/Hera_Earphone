@@ -323,39 +323,48 @@ void test_data_send_packet(void)
     // if (vaild_len) {
     //     app_send_user_data(ATT_CHARACTERISTIC_ae03_01_VALUE_HANDLE, send_buffer, vaild_len, ATT_OP_AUTO_READ_CCC);
     // }
+    //================= 修改开始 =================
     if (opus_mode) {
-        memset(opus_packages + opus_idx * OPUS_PACKAGE_BYTE, 0, OPUS_PACKAGE_BYTE);
-        opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = vad_is_activate;
-        if (!opus_mic_buffer_sent) {
-            memcpy(
-                opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1,
-                opus_mic_buffer,
-                OPUS_PART_BYTE
-            );
-        }
-        if (!opus_dec_buffer_sent) {
-            memcpy(
-                opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE,
-                opus_dec_buffer,
-                OPUS_PART_BYTE
-            );
-        }
-        opus_packages[(opus_idx + 1) * OPUS_PACKAGE_BYTE - DEBUG_BYTE] = send_index;
+        // 修改为发送测试数据 11 22 33 44
+        u8 test_data[4] = {0x11, 0x22, 0x33, 0x44};
+
+        // 注释掉原来的数据打包逻辑
+        // memset(opus_packages + opus_idx * OPUS_PACKAGE_BYTE, 0, OPUS_PACKAGE_BYTE);
+        // opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = vad_is_activate;
+        // if (!opus_mic_buffer_sent) {
+        //     memcpy(
+        //         opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1,
+        //         opus_mic_buffer,
+        //         OPUS_PART_BYTE
+        //     );
+        // }
+        // if (!opus_dec_buffer_sent) {
+        //     memcpy(
+        //         opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE,
+        //         opus_dec_buffer,
+        //         OPUS_PART_BYTE
+        //     );
+        // }
+        // opus_packages[(opus_idx + 1) * OPUS_PACKAGE_BYTE - DEBUG_BYTE] = send_index;
+
         int ret = app_send_user_data(
             ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
-            opus_packages + opus_idx * OPUS_PACKAGE_BYTE,
-            OPUS_PACKAGE_BYTE,
+            test_data,
+            4,  // 发送4字节的测试数据
             ATT_OP_AUTO_READ_CCC
         );
         if (ret == 0) {
-            opus_idx = (opus_idx + 1) % MAX_CONFLICT_COUNT;
-            send_index++;
+            // opus_idx = (opus_idx + 1) % MAX_CONFLICT_COUNT;
+            // send_index++;
             failed_count = 0;
+            log_info("test data sent: 11 22 33 44\n");
         } else {
-            log_info("send fail!!!");
+            log_info("test data send fail!!!");
             failed_count++;
         }
-    } else {
+    }
+    //================= 修改结束 =================
+    else {
         if (vaild_len == PACKAGE_BYTE && package_undone_count > 0) {
             memcpy(
                 clip_packages + clip_idx * PACKAGE_BYTE,
@@ -752,17 +761,23 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
         check_connetion_updata_deal();
         log_info("\n------write ccc:%04x, %02x\n", handle, buffer[0]);
         att_set_ccc_config(handle, buffer[0]);
+        //================= 修改开始 =================
         if (buffer[0]) {
             opus_mode = true;
-            mic_rec_clock_set();
-            audio_mic_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
-            audio_dec_enc_open(rec_enc_dec_output, AUDIO_CODING_OPUS, 0 << 6);
+            // 注释掉原来的Opus编码逻辑
+            // mic_rec_clock_set();
+            // audio_mic_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
+            // audio_dec_enc_open(rec_enc_dec_output, AUDIO_CODING_OPUS, 0 << 6);
             can_send_now_wakeup();
+            log_info("\n------ae04 notify enabled, sending test data\n");
         } else {
-            audio_mic_enc_close();
-            audio_dec_enc_close();
-            mic_rec_clock_recover();
+            // 注释掉原来的关闭逻辑
+            // audio_mic_enc_close();
+            // audio_dec_enc_close();
+            // mic_rec_clock_recover();
+            log_info("\n------ae04 notify disabled\n");
         }
+        //================= 修改结束 =================
         break;
 
     case ATT_CHARACTERISTIC_ae01_01_VALUE_HANDLE:

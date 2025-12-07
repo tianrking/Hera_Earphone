@@ -1106,7 +1106,7 @@ DAC硬件上的连接方式,可选的配置：
 /*编码格式使能*/
 #define TCFG_ENC_MSBC_ENABLE				ENABLE
 #define TCFG_ENC_CVSD_ENABLE				ENABLE
-#define TCFG_ENC_OPUS_ENABLE                DISABLE
+#define TCFG_ENC_OPUS_ENABLE                ENABLE
 #define TCFG_ENC_SPEEX_ENABLE               DISABLE
 
 /*提示音叠加配置*/
