@@ -149,10 +149,17 @@ const struct task_info task_info_table[] = {
 
 APP_VAR app_var;
 
-// 定义PA6按键引脚
+// 定义按键引脚
 #define KEY_PA6_PIN    IO_PORTA_06
+#define KEY_PA7_PIN    IO_PORTA_07
 
-// PA6按键检测初始化
+// 全局计数器，用于控制发送的内容
+static int ble_counter = 0;
+
+// 声明外部函数
+extern void set_ble_counter_value(int value);
+
+// PA6和PA7按键检测初始化
 void pa6_key_init(void)
 {
     // 初始化 PA6 为输入模式，开启内部上拉
@@ -160,47 +167,88 @@ void pa6_key_init(void)
     gpio_set_pull_up(KEY_PA6_PIN, 1);    // 开启上拉
     gpio_set_die(KEY_PA6_PIN, 1);        // 数字输入使能
 
-    printf("PA6 key initialized\n");
-    log_info("PA6 key initialized\n");
+    // 初始化 PA7 为输入模式，开启内部上拉
+    gpio_set_direction(KEY_PA7_PIN, 1);  // 设置为输入
+    gpio_set_pull_up(KEY_PA7_PIN, 1);    // 开启上拉
+    gpio_set_die(KEY_PA7_PIN, 1);        // 数字输入使能
+
+    printf("PA6 and PA7 keys initialized\n");
+    log_info("PA6 and PA7 keys initialized\n");
 }
 
-// PA6按键检测任务 - 优化的轮询方式
+// PA6和PA7按键检测任务 - 支持计数器控制
 static void pa6_key_polling_task_handle(void *p)
 {
-    printf("PA6 key task started\n");
-    log_info("PA6 key task started\n");
+    printf("PA6/PA7 key task started, counter: %d\n", ble_counter);
+    log_info("PA6/PA7 key task started, counter: %d\n", ble_counter);
 
     pa6_key_init();
 
-    u8 last_key_state = 1;  // 上次按键状态，默认为高电平（未按下）
-    u8 stable_count = 0;    // 稳定计数器
-    u8 key_pressed = 0;     // 按键按下标志
+    // PA6按键状态
+    u8 last_pa6_state = 1;
+    u8 pa6_stable_count = 0;
+    u8 pa6_pressed = 0;
+
+    // PA7按键状态
+    u8 last_pa7_state = 1;
+    u8 pa7_stable_count = 0;
+    u8 pa7_pressed = 0;
 
     while (1) {
-        u8 current_state = gpio_read(KEY_PA6_PIN);
+        // 检测PA6按键
+        u8 pa6_current = gpio_read(KEY_PA6_PIN);
+        if (pa6_current != last_pa6_state) {
+            pa6_stable_count++;
+            if (pa6_stable_count >= 5) {  // 消抖
+                if (pa6_current == 0 && !pa6_pressed) {
+                    // PA6按下 - 计数器加1
+                    pa6_pressed = 1;
+                    ble_counter++;
+                    if (ble_counter > 99) ble_counter = 99;  // 限制最大值
+                    printf("PA6 Pressed! Counter: %d\n", ble_counter);
+                    log_info("PA6 Pressed! Counter: %d\n", ble_counter);
 
-        // 状态变化检测
-        if (current_state != last_key_state) {
-            stable_count++;
-
-            // 需要连续5次检测到相同状态才认为稳定（消抖）
-            if (stable_count >= 5) {
-                if (current_state == 0 && !key_pressed) {
-                    // 按键按下
-                    key_pressed = 1;
-                    printf("Key PA6 Pressed!\n");
-                    log_info("Key PA6 Pressed!\n");
-                } else if (current_state == 1 && key_pressed) {
-                    // 按键释放
-                    key_pressed = 0;
-                    printf("Key PA6 Released!\n");
-                    log_info("Key PA6 Released!\n");
+                    // 通知BLE模块更新发送内容
+                    if (set_ble_counter_value) {
+                        set_ble_counter_value(ble_counter);
+                    }
+                } else if (pa6_current == 1 && pa6_pressed) {
+                    pa6_pressed = 0;
+                    printf("PA6 Released!\n");
                 }
-                last_key_state = current_state;
-                stable_count = 0;
+                last_pa6_state = pa6_current;
+                pa6_stable_count = 0;
             }
         } else {
-            stable_count = 0;  // 状态稳定，重置计数器
+            pa6_stable_count = 0;
+        }
+
+        // 检测PA7按键
+        u8 pa7_current = gpio_read(KEY_PA7_PIN);
+        if (pa7_current != last_pa7_state) {
+            pa7_stable_count++;
+            if (pa7_stable_count >= 5) {  // 消抖
+                if (pa7_current == 0 && !pa7_pressed) {
+                    // PA7按下 - 计数器减1
+                    pa7_pressed = 1;
+                    ble_counter--;
+                    if (ble_counter < 0) ble_counter = 0;  // 限制最小值
+                    printf("PA7 Pressed! Counter: %d\n", ble_counter);
+                    log_info("PA7 Pressed! Counter: %d\n", ble_counter);
+
+                    // 通知BLE模块更新发送内容
+                    if (set_ble_counter_value) {
+                        set_ble_counter_value(ble_counter);
+                    }
+                } else if (pa7_current == 1 && pa7_pressed) {
+                    pa7_pressed = 0;
+                    printf("PA7 Released!\n");
+                }
+                last_pa7_state = pa7_current;
+                pa7_stable_count = 0;
+            }
+        } else {
+            pa7_stable_count = 0;
         }
 
         os_time_dly(5);  // 5ms检测一次，降低CPU占用

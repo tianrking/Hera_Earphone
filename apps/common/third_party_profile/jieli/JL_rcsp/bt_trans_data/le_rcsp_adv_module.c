@@ -105,8 +105,20 @@ static u32 server_timer_handle = 0;
 
 static hci_con_handle_t con_handle;
 
+// 添加发送频率控制
+static u32 last_send_time = 0;
+static u32 send_interval_ms = 100;  // 每100ms发送一次
+
 //加密设置
 static const uint8_t sm_min_key_size = 7;
+
+// 计数器相关的全局变量
+static int current_ble_counter = 0;
+static u8 counter_data[20];  // 存储要发送的 "Hera + 数字" 数据
+static u8 send_counter_flag = 0;  // 标志是否发送计数器数据
+
+// 函数声明
+void set_ble_counter_value(int value);
 
 //连接参数设置
 static const uint8_t connection_update_enable = 1; ///0--disable, 1--enable
@@ -138,6 +150,7 @@ static u8 scan_rsp_data[ADV_RSP_PACKET_MAX];//max is 31
 /* #define scan_rsp_data  &att_ram_buffer[32] */
 
 static u32 ble_timer_handle = 0;
+static u32 data_send_timer_handle = 0;  // 用于定期发送数据的定时器
 static char *gap_device_name = "br22_ble_test";
 static u8 gap_device_name_len = 0;
 volatile static u8 ble_work_state = 0;
@@ -325,42 +338,26 @@ void test_data_send_packet(void)
     // }
     //================= 修改开始 =================
     if (opus_mode) {
-        // 修改为发送测试数据 11 22 33 44
-        u8 test_data[4] = {0x11, 0x22, 0x33, 0x44};
+        // 控制发送频率，避免发送太快导致系统崩溃 (100ms间隔)
+        u32 current_time = jiffies;
 
-        // 注释掉原来的数据打包逻辑
-        // memset(opus_packages + opus_idx * OPUS_PACKAGE_BYTE, 0, OPUS_PACKAGE_BYTE);
-        // opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = vad_is_activate;
-        // if (!opus_mic_buffer_sent) {
-        //     memcpy(
-        //         opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1,
-        //         opus_mic_buffer,
-        //         OPUS_PART_BYTE
-        //     );
-        // }
-        // if (!opus_dec_buffer_sent) {
-        //     memcpy(
-        //         opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE,
-        //         opus_dec_buffer,
-        //         OPUS_PART_BYTE
-        //     );
-        // }
-        // opus_packages[(opus_idx + 1) * OPUS_PACKAGE_BYTE - DEBUG_BYTE] = send_index;
+        if (time_after(current_time, last_send_time + send_interval_ms)) {
+            // 发送格式化的 "Hera + 数字" 数据
+            int data_len = strlen((char *)counter_data);
 
-        int ret = app_send_user_data(
-            ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
-            test_data,
-            4,  // 发送4字节的测试数据
-            ATT_OP_AUTO_READ_CCC
-        );
-        if (ret == 0) {
-            // opus_idx = (opus_idx + 1) % MAX_CONFLICT_COUNT;
-            // send_index++;
-            failed_count = 0;
-            log_info("test data sent: 11 22 33 44\n");
-        } else {
-            log_info("test data send fail!!!");
-            failed_count++;
+            int ret = app_send_user_data(
+                ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
+                counter_data,
+                data_len,
+                ATT_OP_AUTO_READ_CCC
+            );
+            if (ret == 0) {
+                failed_count = 0;
+                last_send_time = current_time;  // 更新最后发送时间
+                log_info("BLE data sent: %s (len=%d)\n", counter_data, data_len);
+            } else {
+                failed_count++;
+            }
         }
     }
     //================= 修改结束 =================
@@ -402,6 +399,14 @@ void test_data_send_packet(void)
 }
 #endif
 
+
+// 定期发送数据的定时器处理函数
+static void data_send_timer_handler(void)
+{
+    if (opus_mode && con_handle) {
+        test_data_send_packet();
+    }
+}
 
 static void can_send_now_wakeup(void)
 {
@@ -524,6 +529,11 @@ static void cbk_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
         case HCI_EVENT_DISCONNECTION_COMPLETE:
             log_info("HCI_EVENT_DISCONNECTION_COMPLETE: %0x\n", packet[5]);
             con_handle = 0;
+            // 断开连接时停止定时器
+            if (data_send_timer_handle) {
+                sys_timer_del(data_send_timer_handle);
+                data_send_timer_handle = 0;
+            }
 #if RCSP_ADV_MUSIC_INFO_ENABLE
             stop_get_music_timer(1);
 #endif
@@ -769,12 +779,24 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
             // audio_mic_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
             // audio_dec_enc_open(rec_enc_dec_output, AUDIO_CODING_OPUS, 0 << 6);
             can_send_now_wakeup();
+            // 重置发送时间戳，确保立即发送第一包数据
+            last_send_time = 0;
+            // 启动定期发送定时器 (100ms间隔)
+            if (data_send_timer_handle) {
+                sys_timer_del(data_send_timer_handle);
+            }
+            data_send_timer_handle = sys_timer_add(NULL, data_send_timer_handler, 100);
             log_info("\n------ae04 notify enabled, sending test data\n");
         } else {
             // 注释掉原来的关闭逻辑
             // audio_mic_enc_close();
             // audio_dec_enc_close();
             // mic_rec_clock_recover();
+            // 停止定期发送定时器
+            if (data_send_timer_handle) {
+                sys_timer_del(data_send_timer_handle);
+                data_send_timer_handle = 0;
+            }
             log_info("\n------ae04 notify disabled\n");
         }
         //================= 修改结束 =================
@@ -1039,6 +1061,12 @@ extern void le_device_db_init(void);
 void ble_profile_init(void)
 {
     printf("ble profile init\n");
+
+    // 初始化计数器为0
+    current_ble_counter = 0;
+    sprintf((char *)counter_data, "Hera 0");
+    send_counter_flag = 0;
+
     le_device_db_init();
     ble_sm_setup_init(IO_CAPABILITY_NO_INPUT_NO_OUTPUT, SM_AUTHREQ_MITM_PROTECTION | SM_AUTHREQ_BONDING, 7, RCSP_ADV_TCFG_BLE_SECURITY_EN);
     /* setup ATT server */
@@ -1892,5 +1920,14 @@ void send_version_to_sibling(void)
     data[2] = ver >> 8;
     tws_api_send_data_to_sibling(data, sizeof(data), TWS_FUNC_ID_SEQ_RAND_SYNC);
 }
+
+//================= 修改开始 =================
+// 设置BLE计数器值的函数，供app_main.c调用
+void set_ble_counter_value(int value)
+{
+    current_ble_counter = value;
+    sprintf((char *)counter_data, "Hera %d", value);
+}
+//================= 修改结束 =================
 #endif
 
