@@ -153,13 +153,25 @@ APP_VAR app_var;
 #define KEY_PA6_PIN    IO_PORTA_06
 #define KEY_PA7_PIN    IO_PORTA_07
 
-// 全局计数器，用于控制发送的内容
-static int ble_counter = 0;
-
 // 声明外部函数
-extern void set_ble_counter_value(int value);
+extern void start_10s_speed_test(void);
+extern void start_simple_abc_test(void);
 
-// PA6和PA7按键检测初始化
+void start_10s_speed_test(void)
+{
+    extern bool opus_mode;
+
+    if (!opus_mode) {
+        printf("\nERROR: Please enter opus mode first!\n");
+        printf("Use command: at+opusmode=1\n");
+        return;
+    }
+
+    // 改为调用简单ABC测试
+    start_simple_abc_test();
+}
+
+// PA6按键检测初始化
 void pa6_key_init(void)
 {
     // 初始化 PA6 为输入模式，开启内部上拉
@@ -167,20 +179,15 @@ void pa6_key_init(void)
     gpio_set_pull_up(KEY_PA6_PIN, 1);    // 开启上拉
     gpio_set_die(KEY_PA6_PIN, 1);        // 数字输入使能
 
-    // 初始化 PA7 为输入模式，开启内部上拉
-    gpio_set_direction(KEY_PA7_PIN, 1);  // 设置为输入
-    gpio_set_pull_up(KEY_PA7_PIN, 1);    // 开启上拉
-    gpio_set_die(KEY_PA7_PIN, 1);        // 数字输入使能
-
-    printf("PA6 and PA7 keys initialized\n");
-    log_info("PA6 and PA7 keys initialized\n");
+    printf("PA6 key initialized - Press to start 10s speed test\n");
+    log_info("PA6 key initialized - Press to start 10s speed test\n");
 }
 
-// PA6和PA7按键检测任务 - 支持计数器控制
+// PA6按键检测任务 - 触发10秒速度测试
 static void pa6_key_polling_task_handle(void *p)
 {
-    printf("PA6/PA7 key task started, counter: %d\n", ble_counter);
-    log_info("PA6/PA7 key task started, counter: %d\n", ble_counter);
+    printf("PA6 speed test task started\n");
+    log_info("PA6 speed test task started\n");
 
     pa6_key_init();
 
@@ -189,11 +196,6 @@ static void pa6_key_polling_task_handle(void *p)
     u8 pa6_stable_count = 0;
     u8 pa6_pressed = 0;
 
-    // PA7按键状态
-    u8 last_pa7_state = 1;
-    u8 pa7_stable_count = 0;
-    u8 pa7_pressed = 0;
-
     while (1) {
         // 检测PA6按键
         u8 pa6_current = gpio_read(KEY_PA6_PIN);
@@ -201,17 +203,15 @@ static void pa6_key_polling_task_handle(void *p)
             pa6_stable_count++;
             if (pa6_stable_count >= 5) {  // 消抖
                 if (pa6_current == 0 && !pa6_pressed) {
-                    // PA6按下 - 计数器加1
+                    // PA6按下 - 开始10秒速度测试
                     pa6_pressed = 1;
-                    ble_counter++;
-                    if (ble_counter > 99) ble_counter = 99;  // 限制最大值
-                    printf("PA6 Pressed! Counter: %d\n", ble_counter);
-                    log_info("PA6 Pressed! Counter: %d\n", ble_counter);
+                    printf("\n====================================\n");
+                    printf("PA6 Pressed! Starting speed test...\n");
+                    printf("====================================\n");
+                    log_info("PA6 Pressed! Starting 10-second speed test...\n");
 
-                    // 通知BLE模块更新发送内容
-                    if (set_ble_counter_value) {
-                        set_ble_counter_value(ble_counter);
-                    }
+                    // 调用10秒速度测试函数
+                    start_10s_speed_test();
                 } else if (pa6_current == 1 && pa6_pressed) {
                     pa6_pressed = 0;
                     printf("PA6 Released!\n");
@@ -223,35 +223,7 @@ static void pa6_key_polling_task_handle(void *p)
             pa6_stable_count = 0;
         }
 
-        // 检测PA7按键
-        u8 pa7_current = gpio_read(KEY_PA7_PIN);
-        if (pa7_current != last_pa7_state) {
-            pa7_stable_count++;
-            if (pa7_stable_count >= 5) {  // 消抖
-                if (pa7_current == 0 && !pa7_pressed) {
-                    // PA7按下 - 计数器减1
-                    pa7_pressed = 1;
-                    ble_counter--;
-                    if (ble_counter < 0) ble_counter = 0;  // 限制最小值
-                    printf("PA7 Pressed! Counter: %d\n", ble_counter);
-                    log_info("PA7 Pressed! Counter: %d\n", ble_counter);
-
-                    // 通知BLE模块更新发送内容
-                    if (set_ble_counter_value) {
-                        set_ble_counter_value(ble_counter);
-                    }
-                } else if (pa7_current == 1 && pa7_pressed) {
-                    pa7_pressed = 0;
-                    printf("PA7 Released!\n");
-                }
-                last_pa7_state = pa7_current;
-                pa7_stable_count = 0;
-            }
-        } else {
-            pa7_stable_count = 0;
-        }
-
-        os_time_dly(5);  // 5ms检测一次，降低CPU占用
+        os_time_dly(10);  // 10ms检测一次
     }
 }
 

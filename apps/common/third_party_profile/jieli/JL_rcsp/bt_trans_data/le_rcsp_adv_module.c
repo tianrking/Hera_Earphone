@@ -107,7 +107,20 @@ static hci_con_handle_t con_handle;
 
 // 添加发送频率控制
 static u32 last_send_time = 0;
-static u32 send_interval_ms = 100;  // 每100ms发送一次
+static u32 send_interval_ms = 5;  // 高速测试模式：每5ms发送一次
+
+// 高速测试数据
+#define TEST_DATA_PATTERN "1234567890"
+#define TEST_DATA_PATTERN_LEN 10
+#define TEST_PACKET_SIZE 20  // 使用20字节，适合默认MTU(23-3)
+static u8 speed_test_buffer[TEST_PACKET_SIZE];
+static u32 total_bytes_sent = 0;
+static u32 test_start_time = 0;
+static bool speed_test_mode = false;  // 是否开启速度测试模式
+static u16 speed_test_timer = 0;      // 10秒测试定时器
+static u32 max_speed = 0;             // 记录最大速度
+static u32 last_speed_update_time = 0; // 上次速度更新时间
+static u32 last_sent_bytes = 0;       // 上次记录的总发送字节数
 
 //加密设置
 static const uint8_t sm_min_key_size = 7;
@@ -119,6 +132,10 @@ static u8 send_counter_flag = 0;  // 标志是否发送计数器数据
 
 // 函数声明
 void set_ble_counter_value(int value);
+static void speed_test_10s_timeout(void);
+
+// 简单测试 - 发送 a b c
+void start_simple_abc_test(void);
 
 //连接参数设置
 static const uint8_t connection_update_enable = 1; ///0--disable, 1--enable
@@ -338,23 +355,82 @@ void test_data_send_packet(void)
     // }
     //================= 修改开始 =================
     if (opus_mode) {
-        // 控制发送频率，避免发送太快导致系统崩溃 (100ms间隔)
+        // 控制发送频率，高速测试模式使用5ms间隔
         u32 current_time = jiffies;
 
         if (time_after(current_time, last_send_time + send_interval_ms)) {
-            // 发送格式化的 "Hera + 数字" 数据
-            int data_len = strlen((char *)counter_data);
+            int ret = -1;
 
-            int ret = app_send_user_data(
-                ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
-                counter_data,
-                data_len,
-                ATT_OP_AUTO_READ_CCC
-            );
+            if (speed_test_mode) {
+                // 高速测试模式：发送最大包的"1234567890"数据
+                ret = app_send_user_data(
+                    ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
+                    speed_test_buffer,
+                    TEST_PACKET_SIZE,
+                    ATT_OP_AUTO_READ_CCC
+                );
+
+                if (ret == 0) {
+                    total_bytes_sent += TEST_PACKET_SIZE;
+
+                    // 记录开始时间
+                    if (test_start_time == 0) {
+                        test_start_time = current_time;
+                        last_speed_update_time = current_time;
+                        last_sent_bytes = 0;
+                    }
+
+                    // 每500ms计算一次当前速度
+                    if (current_time - last_speed_update_time >= 500) {
+                        u32 time_diff_ms = current_time - last_speed_update_time;
+                        u32 bytes_diff = total_bytes_sent - last_sent_bytes;
+                        u32 current_speed = (bytes_diff * 1000) / time_diff_ms;  // bytes/s
+
+                        // 更新最大速度
+                        if (current_speed > max_speed) {
+                            max_speed = current_speed;
+                        }
+
+                        // 计算平均速度和剩余时间
+                        u32 elapsed_ms = current_time - test_start_time;
+                        float elapsed_sec = elapsed_ms / 1000.0;
+                        float avg_speed_bps = (float)total_bytes_sent / elapsed_sec;
+                        float avg_speed_kbps = avg_speed_bps / 1024;
+                        float current_speed_kbps = (float)current_speed / 1024;
+                        u32 remaining_ms = 10000 - elapsed_ms;
+                        u32 remaining_sec = remaining_ms / 1000;
+
+                        // 显示进度
+                        log_info("[%us remaining] Current: %.1f KB/s | Max: %.1f KB/s | Avg: %.1f KB/s | Sent: %.1f KB\n",
+                               remaining_sec, current_speed_kbps, (float)max_speed / 1024,
+                               avg_speed_kbps, (float)total_bytes_sent / 1024);
+
+                        // 更新记录
+                        last_speed_update_time = current_time;
+                        last_sent_bytes = total_bytes_sent;
+                    }
+                }
+            }
+            /* 注释掉普通模式：发送 "Hera + 数字" 数据
+            } else {
+                // 普通模式：发送 "Hera + 数字" 数据
+                int data_len = strlen((char *)counter_data);
+                ret = app_send_user_data(
+                    ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
+                    counter_data,
+                    data_len,
+                    ATT_OP_AUTO_READ_CCC
+                );
+
+                if (ret == 0) {
+                    log_info("BLE data sent: %s (len=%d)\n", counter_data, data_len);
+                }
+            }
+            */
+
             if (ret == 0) {
                 failed_count = 0;
                 last_send_time = current_time;  // 更新最后发送时间
-                log_info("BLE data sent: %s (len=%d)\n", counter_data, data_len);
             } else {
                 failed_count++;
             }
@@ -781,11 +857,11 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
             can_send_now_wakeup();
             // 重置发送时间戳，确保立即发送第一包数据
             last_send_time = 0;
-            // 启动定期发送定时器 (100ms间隔)
+            // 启动定期发送定时器 (5ms间隔以获得最大速度)
             if (data_send_timer_handle) {
                 sys_timer_del(data_send_timer_handle);
             }
-            data_send_timer_handle = sys_timer_add(NULL, data_send_timer_handler, 100);
+            data_send_timer_handle = sys_timer_add(NULL, data_send_timer_handler, 5);
             log_info("\n------ae04 notify enabled, sending test data\n");
         } else {
             // 注释掉原来的关闭逻辑
@@ -1066,6 +1142,14 @@ void ble_profile_init(void)
     current_ble_counter = 0;
     sprintf((char *)counter_data, "Hera 0");
     send_counter_flag = 0;
+
+    // 初始化高速测试数据缓冲区（用"1234567890"填充）
+    // 20字节的包正好是 "12345678901234567890"
+    memcpy(speed_test_buffer, "12345678901234567890", TEST_PACKET_SIZE);
+    total_bytes_sent = 0;
+    test_start_time = 0;
+    speed_test_mode = false;
+    speed_test_timer = 0;
 
     le_device_db_init();
     ble_sm_setup_init(IO_CAPABILITY_NO_INPUT_NO_OUTPUT, SM_AUTHREQ_MITM_PROTECTION | SM_AUTHREQ_BONDING, 7, RCSP_ADV_TCFG_BLE_SECURITY_EN);
@@ -1928,6 +2012,114 @@ void set_ble_counter_value(int value)
     current_ble_counter = value;
     sprintf((char *)counter_data, "Hera %d", value);
 }
+
+// 切换到高速测试模式
+void enable_speed_test_mode(void)
+{
+    speed_test_mode = true;
+    total_bytes_sent = 0;
+    test_start_time = 0;
+    last_send_time = 0;  // 立即开始发送
+    max_speed = 0;       // 重置最大速度
+    last_speed_update_time = 0;
+    last_sent_bytes = 0;
+
+    // 设置10秒定时器（只执行一次的timeout类型）
+    speed_test_timer = sys_timeout_add(NULL, speed_test_10s_timeout, 10000);
+
+    log_info("Speed test mode ENABLED - sending 244-byte packets at max speed for 10 seconds\n");
+}
+
+// 切换到普通模式（发送Hera + 数字）
+void disable_speed_test_mode(void)
+{
+    speed_test_mode = false;
+    if (speed_test_timer) {
+        sys_timeout_del(speed_test_timer);
+        speed_test_timer = 0;
+    }
+    log_info("Speed test mode DISABLED\n");
+}
+
+// 获取速度测试统计信息
+void get_speed_test_stats(u32 *bytes_sent, u32 *elapsed_ms)
+{
+    if (bytes_sent) *bytes_sent = total_bytes_sent;
+    if (elapsed_ms && test_start_time > 0) {
+        *elapsed_ms = jiffies - test_start_time;
+    } else if (elapsed_ms) {
+        *elapsed_ms = 0;
+    }
+}
+
+// 10秒速度测试定时器回调
+static void speed_test_10s_timeout(void)
+{
+    speed_test_mode = false;
+    speed_test_timer = 0;
+
+    u32 elapsed_ms = jiffies - test_start_time;
+    float elapsed_sec = elapsed_ms / 1000.0;
+    float avg_speed_bps = (float)total_bytes_sent / elapsed_sec;
+    float avg_speed_kbps = avg_speed_bps / 1024;
+    float max_speed_kbps = (float)max_speed / 1024;
+
+    log_info("\n====================================\n");
+    log_info("  10-Second Speed Test Complete!\n");
+    log_info("====================================\n");
+    log_info("Total bytes: %u (%.2f KB)\n", total_bytes_sent, (float)total_bytes_sent / 1024);
+    log_info("Time: %.2f seconds\n", elapsed_sec);
+    log_info("Average speed: %.2f KB/s (%.0f kbps)\n", avg_speed_kbps, avg_speed_bps);
+    log_info("MAX speed: %.2f KB/s (%.0f kbps)\n", max_speed_kbps, max_speed);
+    log_info("Packets sent: %u\n", total_bytes_sent / TEST_PACKET_SIZE);
+    log_info("Packets per second: %.0f\n", (float)total_bytes_sent / TEST_PACKET_SIZE / elapsed_sec);
+    log_info("====================================\n");
+}
+
+// 简单测试：依次发送 a b c
+void start_simple_abc_test(void)
+{
+    static u8 abc_data[] = {'a', 'b', 'c'};
+    int ret;
+
+    printf("\n===== Starting Simple ABC Test =====\n");
+
+    // 发送 a
+    ret = app_send_user_data(ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE, &abc_data[0], 1, ATT_OP_AUTO_READ_CCC);
+    if (ret == 0) {
+        printf("Sent: a\n");
+    } else {
+        printf("Failed to send a\n");
+        return;
+    }
+
+    // 等待一小段时间
+    os_time_dly(100);  // 1秒
+
+    // 发送 b
+    ret = app_send_user_data(ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE, &abc_data[1], 1, ATT_OP_AUTO_READ_CCC);
+    if (ret == 0) {
+        printf("Sent: b\n");
+    } else {
+        printf("Failed to send b\n");
+        return;
+    }
+
+    // 等待一小段时间
+    os_time_dly(100);  // 1秒
+
+    // 发送 c
+    ret = app_send_user_data(ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE, &abc_data[2], 1, ATT_OP_AUTO_READ_CCC);
+    if (ret == 0) {
+        printf("Sent: c\n");
+    } else {
+        printf("Failed to send c\n");
+        return;
+    }
+
+    printf("\n===== ABC Test Complete =====\n");
+}
+
 //================= 修改结束 =================
 #endif
 
