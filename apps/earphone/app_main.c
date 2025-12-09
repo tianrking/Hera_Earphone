@@ -142,42 +142,42 @@ const struct task_info task_info_table[] = {
 
     {"pca",                 1,      0,  256,   128  },
     {"vad_task",            1,      0,  256,   128  },
-    {"pa6_key_polling",     7,      0,  256,   128  },
+    {"pa7_key_polling",     7,      0,  256,   128  },
     {0, 0},
 };
 
 
 APP_VAR app_var;
 
-// 定义PA6按键引脚
-#define KEY_PA6_PIN    IO_PORTA_06
+// 定义PA7按键引脚
+#define KEY_PA7_PIN    IO_PORTA_07
 
-// PA6按键检测初始化
-void pa6_key_init(void)
+// PA7按键检测初始化
+void pa7_key_init(void)
 {
-    // 初始化 PA6 为输入模式，开启内部上拉
-    gpio_set_direction(KEY_PA6_PIN, 1);  // 设置为输入
-    gpio_set_pull_up(KEY_PA6_PIN, 1);    // 开启上拉
-    gpio_set_die(KEY_PA6_PIN, 1);        // 数字输入使能
+    // 初始化 PA7 为输入模式，开启内部上拉
+    gpio_set_direction(KEY_PA7_PIN, 1);  // 设置为输入
+    gpio_set_pull_up(KEY_PA7_PIN, 1);    // 开启上拉
+    gpio_set_die(KEY_PA7_PIN, 1);        // 数字输入使能
 
-    printf("PA6 key initialized\n");
-    log_info("PA6 key initialized\n");
+    printf("PA7 key initialized\n");
+    log_info("PA7 key initialized\n");
 }
 
-// PA6按键检测任务 - 优化的轮询方式
-static void pa6_key_polling_task_handle(void *p)
+// PA7按键检测任务 - 优化的轮询方式
+static void pa7_key_polling_task_handle(void *p)
 {
-    printf("PA6 key task started\n");
-    log_info("PA6 key task started\n");
+    printf("PA7 key task started\n");
+    log_info("PA7 key task started\n");
 
-    pa6_key_init();
+    pa7_key_init();
 
     u8 last_key_state = 1;  // 上次按键状态，默认为高电平（未按下）
     u8 stable_count = 0;    // 稳定计数器
     u8 key_pressed = 0;     // 按键按下标志
 
     while (1) {
-        u8 current_state = gpio_read(KEY_PA6_PIN);
+        u8 current_state = gpio_read(KEY_PA7_PIN);
 
         // 状态变化检测
         if (current_state != last_key_state) {
@@ -188,13 +188,13 @@ static void pa6_key_polling_task_handle(void *p)
                 if (current_state == 0 && !key_pressed) {
                     // 按键按下
                     key_pressed = 1;
-                    printf("Key PA6 Pressed!\n");
-                    log_info("Key PA6 Pressed!\n");
+                    printf("Key PA7 Pressed!\n");
+                    log_info("Key PA7 Pressed!\n");
                 } else if (current_state == 1 && key_pressed) {
                     // 按键释放
                     key_pressed = 0;
-                    printf("Key PA6 Released!\n");
-                    log_info("Key PA6 Released!\n");
+                    printf("Key PA7 Released!\n");
+                    log_info("Key PA7 Released!\n");
                 }
                 last_key_state = current_state;
                 stable_count = 0;
@@ -386,8 +386,13 @@ void app_main()
         bone_task_is_open = true;
     }
 
-    // 创建 PA6 按键检测任务
-    task_create(pa6_key_polling_task_handle, NULL, "pa6_key_polling");
+    // 创建 PA7 按键检测任务
+    int task_ret = task_create(pa7_key_polling_task_handle, NULL, "pa7_key_polling");
+    if (task_ret == 0) {
+        printf("PA7 key task created successfully\n");
+    } else {
+        printf("PA7 key task create failed! ret=%d\n", task_ret);
+    }
 }
 
 int __attribute__((weak)) eSystemConfirmStopStatus(void)
