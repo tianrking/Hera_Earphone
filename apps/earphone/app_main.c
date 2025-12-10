@@ -142,7 +142,7 @@ const struct task_info task_info_table[] = {
 
     {"pca",                 1,      0,  256,   128  },
     {"vad_task",            1,      0,  256,   128  },
-    {"pa6_key_polling",     7,      0,  256,   128  },
+    {"pa7_key_polling",     7,      0,  256,   128  },
     {0, 0},
 };
 
@@ -150,12 +150,15 @@ const struct task_info task_info_table[] = {
 APP_VAR app_var;
 
 // 定义按键引脚
-#define KEY_PA6_PIN    IO_PORTA_06
 #define KEY_PA7_PIN    IO_PORTA_07
+
+// 全局计数器，用于BLE发送
+static int ble_counter = 0;
 
 // 声明外部函数
 extern void start_10s_speed_test(void);
 extern void start_simple_abc_test(void);
+extern void set_ble_counter_value(int value);
 
 void start_10s_speed_test(void)
 {
@@ -171,56 +174,72 @@ void start_10s_speed_test(void)
     start_simple_abc_test();
 }
 
-// PA6按键检测初始化
-void pa6_key_init(void)
+// PA7按键检测初始化
+void pa7_key_init(void)
 {
-    // 初始化 PA6 为输入模式，开启内部上拉
-    gpio_set_direction(KEY_PA6_PIN, 1);  // 设置为输入
-    gpio_set_pull_up(KEY_PA6_PIN, 1);    // 开启上拉
-    gpio_set_die(KEY_PA6_PIN, 1);        // 数字输入使能
+    // 初始化 PA7 为输入模式，开启内部上拉
+    gpio_set_direction(KEY_PA7_PIN, 1);  // 设置为输入
+    gpio_set_pull_up(KEY_PA7_PIN, 1);    // 开启上拉
+    gpio_set_die(KEY_PA7_PIN, 1);        // 数字输入使能
 
-    printf("PA6 key initialized - Press to start 10s speed test\n");
-    log_info("PA6 key initialized - Press to start 10s speed test\n");
+    printf("PA7 key initialized - Press to control counter\n");
+    log_info("PA7 key initialized - Press to control counter\n");
 }
 
-// PA6按键检测任务 - 触发10秒速度测试
-static void pa6_key_polling_task_handle(void *p)
+// PA7按键检测任务
+static void pa7_key_polling_task_handle(void *p)
 {
-    printf("PA6 speed test task started\n");
-    log_info("PA6 speed test task started\n");
+    printf("PA7 key polling task started, flag: %d (%s)\n", ble_counter, (ble_counter % 2 == 1) ? "ON" : "OFF");
+    log_info("PA7 key polling task started, flag: %d (%s)\n", ble_counter, (ble_counter % 2 == 1) ? "ON" : "OFF");
 
-    pa6_key_init();
+    pa7_key_init();
 
-    // PA6按键状态
-    u8 last_pa6_state = 1;
-    u8 pa6_stable_count = 0;
-    u8 pa6_pressed = 0;
+    // 初始化BLE计数器值
+    set_ble_counter_value(ble_counter);
+
+    // PA7按键状态
+    u8 last_pa7_state = 1;
+    u8 pa7_stable_count = 0;
+    u8 pa7_pressed = 0;
+
+    // 添加调试计数器，每5秒打印一次按键状态
+    static u32 debug_counter = 0;
 
     while (1) {
-        // 检测PA6按键
-        u8 pa6_current = gpio_read(KEY_PA6_PIN);
-        if (pa6_current != last_pa6_state) {
-            pa6_stable_count++;
-            if (pa6_stable_count >= 5) {  // 消抖
-                if (pa6_current == 0 && !pa6_pressed) {
-                    // PA6按下 - 开始10秒速度测试
-                    pa6_pressed = 1;
-                    printf("\n====================================\n");
-                    printf("PA6 Pressed! Starting speed test...\n");
-                    printf("====================================\n");
-                    log_info("PA6 Pressed! Starting 10-second speed test...\n");
+        // 检测PA7按键
+        u8 pa7_current = gpio_read(KEY_PA7_PIN);
+        if (pa7_current != last_pa7_state) {
+            pa7_stable_count++;
+            if (pa7_stable_count >= 5) {  // 消抖
+                if (pa7_current == 0 && !pa7_pressed) {
+                    // PA7按下 - 控制PA7标志（奇数开，偶数关）
+                    pa7_pressed = 1;
+                    ble_counter++;  // 用作PA7标志
 
-                    // 调用10秒速度测试函数
-                    start_10s_speed_test();
-                } else if (pa6_current == 1 && pa6_pressed) {
-                    pa6_pressed = 0;
-                    printf("PA6 Released!\n");
+                    printf("\n====================================\n");
+                    printf("PA7 Pressed! Flag: %d (%s)\n", ble_counter, (ble_counter % 2 == 1) ? "ON" : "OFF");
+                    printf("====================================\n");
+                    log_info("PA7 Pressed! Flag: %d (%s)\n", ble_counter, (ble_counter % 2 == 1) ? "ON" : "OFF");
+
+                    // 更新BLE发送的值
+                    set_ble_counter_value(ble_counter);
+
+                } else if (pa7_current == 1 && pa7_pressed) {
+                    pa7_pressed = 0;
+                    printf("PA7 Released!\n");
                 }
-                last_pa6_state = pa6_current;
-                pa6_stable_count = 0;
+                last_pa7_state = pa7_current;
+                pa7_stable_count = 0;
             }
         } else {
-            pa6_stable_count = 0;
+            pa7_stable_count = 0;
+        }
+
+        // 每5秒打印一次按键状态（用于调试）
+        debug_counter++;
+        if (debug_counter >= 500) {  // 500 * 10ms = 5秒
+            debug_counter = 0;
+            printf("[DEBUG] PA7=%d, Flag=%d (%s)\n", gpio_read(KEY_PA7_PIN), ble_counter, (ble_counter % 2 == 1) ? "ON" : "OFF");
         }
 
         os_time_dly(10);  // 10ms检测一次
@@ -406,8 +425,8 @@ void app_main()
         bone_task_is_open = true;
     }
 
-    // 创建 PA6 按键检测任务
-    task_create(pa6_key_polling_task_handle, NULL, "pa6_key_polling");
+    // 创建 PA7 按键检测任务
+    task_create(pa7_key_polling_task_handle, NULL, "pa7_key_polling");
 }
 
 int __attribute__((weak)) eSystemConfirmStopStatus(void)
