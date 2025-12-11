@@ -153,7 +153,7 @@ APP_VAR app_var;
 #define KEY_PA7_PIN    IO_PORTA_07
 
 // 全局计数器，用于BLE发送
-int ble_counter = 0;
+volatile int ble_counter = 0;
 
 // 声明外部函数
 extern void start_10s_speed_test(void);

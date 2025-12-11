@@ -315,9 +315,6 @@ static void server_timer_stop(void)
 
 bool opus_mode;
 
-// [新增] 引用 app_main.c 中的全局變量
-extern int ble_counter;
-
 u8 clip_idx, bone_idx;
 u8 clip_packages[PACKAGE_BYTE * MAX_CONFLICT_COUNT];
 u8 bone_packages[PACKAGE_BYTE * MAX_CONFLICT_COUNT];
@@ -425,6 +422,7 @@ void test_data_send_packet(void)
     //         bone_idx = (bone_idx + 1) % MAX_CONFLICT_COUNT;
     //     }
     // }
+    extern volatile int ble_counter;
     if (opus_mode) {
         // [核心修改]：直接引用 app_main.c 的 ble_counter
         // 邏輯：如果是偶數 (0, 2, 4...) -> 停止發送
@@ -440,8 +438,8 @@ void test_data_send_packet(void)
 
         // [狀態標記]：可以把這個 counter 值也發給 App，方便 App 知道當前是第幾次開啟
         // 或者您想只發 0/1 狀態，就寫 (ble_counter % 2)
-        opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = (ble_counter % 2);
-        
+        opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = 1;
+
         if (!opus_mic_buffer_sent) {
             memcpy(
                 opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1,
@@ -907,40 +905,17 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
         check_connetion_updata_deal();
         log_info("\n------write ccc:%04x, %02x\n", handle, buffer[0]);
         att_set_ccc_config(handle, buffer[0]);
-        //================= 修改开始 =================
-        if (buffer[0])
-        {
+        if (buffer[0]) {
             opus_mode = true;
-            // 注释掉原来的Opus编码逻辑
-            // mic_rec_clock_set();
-            // audio_mic_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
-            // audio_dec_enc_open(rec_enc_dec_output, AUDIO_CODING_OPUS, 0 << 6);
+            mic_rec_clock_set();
+            audio_mic_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
+            audio_dec_enc_open(rec_enc_dec_output, AUDIO_CODING_OPUS, 0 << 6);
             can_send_now_wakeup();
-            // 重置发送时间戳，确保立即发送第一包数据
-            last_send_time = 0;
-            // 启动定期发送定时器 (5ms间隔以获得最大速度)
-            if (data_send_timer_handle)
-            {
-                sys_timer_del(data_send_timer_handle);
-            }
-            data_send_timer_handle = sys_timer_add(NULL, data_send_timer_handler, 5);
-            log_info("\n------ae04 notify enabled, sending test data\n");
+        } else {
+            audio_mic_enc_close();
+            audio_dec_enc_close();
+            mic_rec_clock_recover();
         }
-        else
-        {
-            // 注释掉原来的关闭逻辑
-            // audio_mic_enc_close();
-            // audio_dec_enc_close();
-            // mic_rec_clock_recover();
-            // 停止定期发送定时器
-            if (data_send_timer_handle)
-            {
-                sys_timer_del(data_send_timer_handle);
-                data_send_timer_handle = 0;
-            }
-            log_info("\n------ae04 notify disabled\n");
-        }
-        //================= 修改结束 =================
         break;
 
     case ATT_CHARACTERISTIC_ae01_01_VALUE_HANDLE:
