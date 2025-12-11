@@ -423,89 +423,87 @@ void test_data_send_packet(void)
     //     }
     // }
     extern volatile int ble_counter;
-    if (opus_mode) {
-        // [核心修改]：直接引用 app_main.c 的 ble_counter
-        // 邏輯：如果是偶數 (0, 2, 4...) -> 停止發送
-        //       如果是奇數 (1, 3, 5...) -> 開始發送
-        if (ble_counter % 2 == 0) {
-            return; // 沒選中，直接退出，不佔用藍牙帶寬
-        }
+    if (opus_mode)
+    {
+        if (ble_counter % 2 != 0)
+        {
 
-        // --- 以下是正常的發送邏輯 (不變) ---
-        memset(opus_packages + opus_idx * OPUS_PACKAGE_BYTE, 0, OPUS_PACKAGE_BYTE);
-        // opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = vad_is_activate;
+            // --- 发送逻辑开始 ---
+            memset(opus_packages + opus_idx * OPUS_PACKAGE_BYTE, 0, OPUS_PACKAGE_BYTE);
 
+            // 状态标记：1=发送中
+            opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = 1;
 
-        // [狀態標記]：可以把這個 counter 值也發給 App，方便 App 知道當前是第幾次開啟
-        // 或者您想只發 0/1 狀態，就寫 (ble_counter % 2)
-        opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = 1;
+            // 拷贝音频数据...
+            if (!opus_mic_buffer_sent)
+            {
+                memcpy(opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1, opus_mic_buffer, OPUS_PART_BYTE);
+            }
+            if (!opus_dec_buffer_sent)
+            {
+                memcpy(opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE, opus_dec_buffer, OPUS_PART_BYTE);
+            }
 
-        if (!opus_mic_buffer_sent) {
-            memcpy(
-                opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1,
-                opus_mic_buffer,
-                OPUS_PART_BYTE
-            );
+            opus_packages[(opus_idx + 1) * OPUS_PACKAGE_BYTE - DEBUG_BYTE] = send_index;
+
+            int ret = app_send_user_data(
+                ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
+                opus_packages + opus_idx * OPUS_PACKAGE_BYTE,
+                OPUS_PACKAGE_BYTE,
+                ATT_OP_AUTO_READ_CCC);
+
+            if (ret == 0)
+            {
+                opus_idx = (opus_idx + 1) % MAX_CONFLICT_COUNT;
+                send_index++;
+                failed_count = 0;
+            }
+            else
+            {
+                failed_count++;
+            }
+            // --- 发送逻辑结束 ---
         }
-        if (!opus_dec_buffer_sent) {
-            memcpy(
-                opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE,
-                opus_dec_buffer,
-                OPUS_PART_BYTE
-            );
-        }
-        opus_packages[(opus_idx + 1) * OPUS_PACKAGE_BYTE - DEBUG_BYTE] = send_index;
-        int ret = app_send_user_data(
-            ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
-            opus_packages + opus_idx * OPUS_PACKAGE_BYTE,
-            OPUS_PACKAGE_BYTE,
-            ATT_OP_AUTO_READ_CCC
-        );
-        if (ret == 0) {
-            opus_idx = (opus_idx + 1) % MAX_CONFLICT_COUNT;
-            send_index++;
-            failed_count = 0;
-        } else {
-            log_info("send fail!!!");
-            failed_count++;
-        }
-    } else {
-        if (vaild_len == PACKAGE_BYTE && package_undone_count > 0) {
+    }
+    else
+    {
+        if (vaild_len == PACKAGE_BYTE && package_undone_count > 0)
+        {
             memcpy(
                 clip_packages + clip_idx * PACKAGE_BYTE,
                 send_buffer + package_done_offset * PACKAGE_BYTE,
-                PACKAGE_BYTE
-            );
+                PACKAGE_BYTE);
             // clip_packages[(clip_idx + 1) * PACKAGE_BYTE - DEBUG_BYTE + 1] = send_index;
             int ret = app_send_user_data(
                 ATT_CHARACTERISTIC_ae03_01_VALUE_HANDLE,
                 clip_packages + clip_idx * PACKAGE_BYTE,
                 PACKAGE_BYTE,
-                ATT_OP_AUTO_READ_CCC
-            );
+                ATT_OP_AUTO_READ_CCC);
             clip_idx = (clip_idx + 1) % MAX_CONFLICT_COUNT;
-            if (ret == 0) {
+            if (ret == 0)
+            {
                 package_done_offset = (package_done_offset + 1) % MAX_BUFFER_COUNT;
                 package_undone_count--;
                 send_index++;
                 failed_count = 0;
-            } else {
+            }
+            else
+            {
                 log_info("send fail!!!");
                 failed_count++;
             }
-        } else {
+        }
+        else
+        {
             bone_packages[bone_idx * PACKAGE_BYTE] = vad_is_activate;
             app_send_user_data(
                 ATT_CHARACTERISTIC_ae03_01_VALUE_HANDLE,
                 bone_packages + bone_idx * PACKAGE_BYTE,
                 vaild_len,
-                ATT_OP_AUTO_READ_CCC
-            );
+                ATT_OP_AUTO_READ_CCC);
             bone_idx = (bone_idx + 1) % MAX_CONFLICT_COUNT;
         }
     }
-
-
 }
 #endif
 
@@ -900,21 +898,51 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
         }
         break;
 
-    case ATT_CHARACTERISTIC_ae04_01_CLIENT_CONFIGURATION_HANDLE:
+case ATT_CHARACTERISTIC_ae04_01_CLIENT_CONFIGURATION_HANDLE:
         set_ble_work_state(BLE_ST_NOTIFY_IDICATE);
         check_connetion_updata_deal();
         log_info("\n------write ccc:%04x, %02x\n", handle, buffer[0]);
         att_set_ccc_config(handle, buffer[0]);
+
         if (buffer[0]) {
+            // 1. 標記模式開啟
             opus_mode = true;
+
+            // 2. 開啟音頻編碼 (這部分您已經有了)
             mic_rec_clock_set();
             audio_mic_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
             audio_dec_enc_open(rec_enc_dec_output, AUDIO_CODING_OPUS, 0 << 6);
+
+            // 3. 嘗試喚醒發送 (這只是推一下)
             can_send_now_wakeup();
+            
+            // ============ [關鍵修復] 必須啟動定時器！ ============
+            // 這是"心跳起搏器"，保證即使發送停止，系統也會持續檢查按鍵狀態
+            if (data_send_timer_handle) {
+                sys_timer_del(data_send_timer_handle);
+            }
+            // 每 15ms 檢查一次。如果按鍵關閉，它就空轉；如果按鍵打開，它就恢復發送。
+            data_send_timer_handle = sys_timer_add(NULL, data_send_timer_handler, 15);
+            // ===================================================
+
+            log_info("\n------Voice PTT Mode Enabled: Audio + Timer ON\n");
+
         } else {
+            opus_mode = false;
+
+            // 關閉音頻
             audio_mic_enc_close();
             audio_dec_enc_close();
             mic_rec_clock_recover();
+
+            // ============ [關鍵修復] 停止定時器 ============
+            if (data_send_timer_handle) {
+                sys_timer_del(data_send_timer_handle);
+                data_send_timer_handle = 0;
+            }
+            // =============================================
+            
+            log_info("\n------Voice PTT Mode Disabled\n");
         }
         break;
 
