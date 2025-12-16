@@ -425,7 +425,8 @@ void test_data_send_packet(void)
     extern volatile int ble_counter;
     if (opus_mode)
     {
-        if (ble_counter % 2 != 0)
+        // if (ble_counter % 2 != 0)
+        if(1)
         {
 
             // --- 发送逻辑开始 ---
