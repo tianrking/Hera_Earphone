@@ -1,8 +1,9 @@
 /**
  * @file w25q128.c
- * @brief W25Q128 Flash 芯片软件 SPI 驱动实现
- * @note 引脚定义: MOSI=PG0, MISO=PG1, CS=PB2, CLK=PB1
+ * @brief W25Q128 Flash 芯片软件 SPI 驱动实现 - 三线SPI模式
+ * @note 引脚定义: IO=PG0 (MOSI/MISO共用), CS=PB2, CLK=PB1
  * @note SPI 频率: 1MHz (周期约 1us)
+ * @note 三线模式: MOSI和MISO共用一个引脚，通过切换输入/输出模式实现
  */
 
 #define LOG_TAG_CONST       APP
@@ -54,23 +55,31 @@ static inline void w25q128_clk_set(u8 level)
 }
 
 /**
- * @brief 设置 MOSI 电平
+ * @brief 设置 IO 引脚为输出模式并设置电平
  */
-static inline void w25q128_mosi_set(u8 level)
+static inline void w25q128_io_set_output(u8 level)
 {
-    gpio_write(W25Q128_MOSI_PIN, level);
+    gpio_set_direction(W25Q128_IO_PIN, 0);  // 输出模式
+    gpio_set_die(W25Q128_IO_PIN, 1);
+    gpio_set_pull_up(W25Q128_IO_PIN, 0);
+    gpio_set_pull_down(W25Q128_IO_PIN, 0);
+    gpio_write(W25Q128_IO_PIN, level);
 }
 
 /**
- * @brief 读取 MISO 电平
+ * @brief 设置 IO 引脚为输入模式并读取电平
  */
-static inline u8 w25q128_miso_read(void)
+static inline u8 w25q128_io_read(void)
 {
-    return gpio_read(W25Q128_MISO_PIN);
+    gpio_set_direction(W25Q128_IO_PIN, 1);  // 输入模式
+    gpio_set_die(W25Q128_IO_PIN, 1);
+    gpio_set_pull_up(W25Q128_IO_PIN, 0);
+    gpio_set_pull_down(W25Q128_IO_PIN, 0);
+    return gpio_read(W25Q128_IO_PIN);
 }
 
 /**
- * @brief 软件SPI发送/接收一个字节
+ * @brief 软件SPI发送/接收一个字节 - 三线模式
  * @param tx_byte 要发送的字节
  * @return 接收到的字节
  */
@@ -82,11 +91,11 @@ static u8 soft_spi_transfer_byte(u8 tx_byte)
         // SPI Mode 0: CPOL=0, CPHA=0
         // 时钟空闲为低，在上升沿采样数据
 
-        // 设置 MOSI
+        // 设置 IO 为输出并写入数据位
         if (tx_byte & 0x80) {
-            w25q128_mosi_set(1);
+            w25q128_io_set_output(1);
         } else {
-            w25q128_mosi_set(0);
+            w25q128_io_set_output(0);
         }
         tx_byte <<= 1;
 
@@ -97,9 +106,9 @@ static u8 soft_spi_transfer_byte(u8 tx_byte)
 
         spi_delay();
 
-        // 读取 MISO
+        // 切换 IO 为输入并读取数据位
         rx_byte <<= 1;
-        if (w25q128_miso_read()) {
+        if (w25q128_io_read()) {
             rx_byte |= 0x01;
         }
 
@@ -115,28 +124,21 @@ static u8 soft_spi_transfer_byte(u8 tx_byte)
 /* ==================== W25Q128 基础操作 ==================== */
 
 /**
- * @brief 初始化软件 SPI 接口和 W25Q128
+ * @brief 初始化软件 SPI 接口和 W25Q128 - 三线模式
  */
 int w25q128_init(void)
 {
-    log_info("W25Q128: Initializing software SPI...");
-    log_info("  MOSI = PG0 (0x%02x)", W25Q128_MOSI_PIN);
-    log_info("  MISO = PG1 (0x%02x)", W25Q128_MISO_PIN);
+    log_info("W25Q128: Initializing 3-wire SPI...");
+    log_info("  IO   = PG0 (0x%02x) - MOSI/MISO shared", W25Q128_IO_PIN);
     log_info("  CS   = PB2 (0x%02x)", W25Q128_CS_PIN);
     log_info("  CLK  = PB1 (0x%02x)", W25Q128_CLK_PIN);
 
-    // 配置 MOSI - 输出
-    gpio_set_direction(W25Q128_MOSI_PIN, 0);
-    gpio_set_die(W25Q128_MOSI_PIN, 1);
-    gpio_set_pull_up(W25Q128_MOSI_PIN, 0);
-    gpio_set_pull_down(W25Q128_MOSI_PIN, 0);
-    gpio_write(W25Q128_MOSI_PIN, 0);
-
-    // 配置 MISO - 输入
-    gpio_set_direction(W25Q128_MISO_PIN, 1);
-    gpio_set_die(W25Q128_MISO_PIN, 1);
-    gpio_set_pull_up(W25Q128_MISO_PIN, 0);
-    gpio_set_pull_down(W25Q128_MISO_PIN, 0);
+    // 配置 IO 引脚 - 默认为输出模式
+    gpio_set_direction(W25Q128_IO_PIN, 0);
+    gpio_set_die(W25Q128_IO_PIN, 1);
+    gpio_set_pull_up(W25Q128_IO_PIN, 0);
+    gpio_set_pull_down(W25Q128_IO_PIN, 0);
+    gpio_write(W25Q128_IO_PIN, 0);
 
     // 配置 CS - 输出
     gpio_set_direction(W25Q128_CS_PIN, 0);
@@ -576,12 +578,12 @@ int w25q128_test(void)
         printf("    [FAILED] Sector erase failed!\n");
     } else {
         // 准备 4 字节数据: 0x11 0x22 0x33 0x44
-        write_buf[0] = 0x11;
-        write_buf[1] = 0x22;
-        write_buf[2] = 0x33;
-        write_buf[3] = 0x44;
+        write_buf[0] = 0x66;
+        write_buf[1] = 0x77;
+        write_buf[2] = 0x99;
+        write_buf[3] = 0x11;
 
-        printf("    Writing 4 bytes: 0x11 0x22 0x33 0x44 to 0x%06x...\n", test_addr);
+        printf("    Writing 4 bytes: 0x66 0x77 0x99 0x11 to 0x%06x...\n", test_addr);
         ret = w25q128_page_program(test_addr, write_buf, 4);
         if (ret == 0) {
             printf("    Write OK!\n");
@@ -595,12 +597,12 @@ int w25q128_test(void)
                        read_buf[0], read_buf[1], read_buf[2], read_buf[3]);
 
                 // 验证数据
-                if (read_buf[0] == 0x11 && read_buf[1] == 0x22 &&
-                    read_buf[2] == 0x33 && read_buf[3] == 0x44) {
-                    printf("    [PASSED] Data matches! 0x11223344 written and verified!\n");
+                if (read_buf[0] == 0x66 && read_buf[1] == 0x77 &&
+                    read_buf[2] == 0x99 && read_buf[3] == 0x11) {
+                    printf("    [PASSED] Data matches! 0x66779911 written and verified!\n");
                 } else {
                     printf("    [FAILED] Data mismatch!\n");
-                    printf("    Expected: 0x11 0x22 0x33 0x44\n");
+                    printf("    Expected: 0x66 0x77 0x99 0x11\n");
                     printf("    Got:      0x%02x 0x%02x 0x%02x 0x%02x\n",
                            read_buf[0], read_buf[1], read_buf[2], read_buf[3]);
                     test_passed = 0;

@@ -16,11 +16,14 @@ extern "C" {
 #endif
 
 /* ==================== 引脚定义 ==================== */
-// SPI 引脚定义
-#define W25Q128_MOSI_PIN    IO_PORTG_00      // MOSI - 主机输出从机输入
-#define W25Q128_MISO_PIN    IO_PORTG_01      // MISO - 主机输入从机输出
-#define W25Q128_CS_PIN      IO_PORTB_02      // CS   - 片选信号
-#define W25Q128_CLK_PIN     IO_PORTB_01      // CLK  - 时钟信号
+// SPI 引脚定义 - 三线SPI模式 (MOSI/MISO共用)
+// #define W25Q128_IO_PIN      IO_PORTG_00      // IO - 双向数据线 (MOSI/MISO共用)
+// #define W25Q128_CS_PIN      IO_PORTB_02      // CS   - 片选信号
+// #define W25Q128_CLK_PIN     IO_PORTB_01      // CLK  - 时钟信号
+
+#define W25Q128_IO_PIN      IO_PORTC_05      // IO - 双向数据线 (MOSI/MISO共用)
+#define W25Q128_CS_PIN      IO_PORTC_03      // CS   - 片选信号
+#define W25Q128_CLK_PIN     IO_PORTC_04      // CLK  - 时钟信号
 
 /* ==================== W25Q128 命令定义 ==================== */
 #define W25Q128_WRITE_ENABLE              0x06
