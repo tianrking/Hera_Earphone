@@ -510,6 +510,7 @@ c_SRC_FILES := \
 	apps/earphone/user_cfg.c \
 	apps/earphone/version.c \
 	apps/earphone/vol_sync.c \
+	apps/earphone/w25q128.c \
 	apps/earphone/wireless_mic/app_main_wireless_mic.c \
 	apps/earphone/wireless_mic/audio/adapter_adc.c \
 	apps/earphone/wireless_mic/audio/adapter_media.c \

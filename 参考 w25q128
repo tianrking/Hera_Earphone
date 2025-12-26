@@ -1,0 +1,636 @@
+/**
+ * @file w25q128.h
+ * @brief W25Q系列SPI Flash驱动头文件
+ * @note  便于移植到不同平台，只需实现底层SPI接口
+ *
+ * 硬件连接:
+ * - CS   -> 片选引脚
+ * - CLK  -> 时钟引脚 (SCK)
+ * - MOSI -> 主出从入 (SDO)
+ * - MISO -> 主入从出 (SDI)
+ */
+
+#ifndef W25Q128_H
+#define W25Q128_H
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ===== 配置宏: 需要根据不同平台实现 ===== */
+
+/**
+ * @brief 平台相关配置结构体
+ * @note  使用时需要设置SPI句柄/引脚等信息
+ */
+typedef struct {
+    void* spi_handle;      // SPI句柄 (平台相关)
+    uint8_t pin_cs;        // 片选引脚
+    uint32_t spi_frequency; // SPI频率
+} w25q_config_t;
+
+/* ===== W25Q系列指令定义 ===== */
+#define W25Q_WRITE_ENABLE       0x06
+#define W25Q_WRITE_DISABLE      0x04
+#define W25Q_READ_STATUS_REG    0x05
+#define W25Q_WRITE_STATUS_REG   0x01
+#define W25Q_READ_DATA          0x03
+#define W25Q_FAST_READ          0x0B
+#define W25Q_PAGE_PROGRAM       0x02
+#define W25Q_SECTOR_ERASE       0x20
+#define W25Q_BLOCK_32K_ERASE    0x52
+#define W25Q_BLOCK_64K_ERASE    0xD8
+#define W25Q_CHIP_ERASE         0xC7
+#define W25Q_READ_ID            0x9F
+#define W25Q_READ_JEDEC_ID      0x9F
+#define W25Q_READ_UNIQUE_ID     0x4B
+
+/* ===== W25Q系列参数定义 ===== */
+#define W25Q_PAGE_SIZE          256        // 页大小: 256字节
+#define W25Q_SECTOR_SIZE        4096       // 扇区大小: 4KB
+#define W25Q_BLOCK32_SIZE       (32 * 1024) // 32KB块
+#define W25Q_BLOCK64_SIZE       (64 * 1024) // 64KB块
+
+/* ===== 芯片容量定义 ===== */
+typedef enum {
+    W25Q_CHIP_UNKNOWN = 0,
+    W25Q_CHIP_64   = 64 * 1024,    // 8Mbit / 1MB
+    W25Q_CHIP_128  = 128 * 1024,   // 16Mbit / 2MB
+    W25Q_CHIP_256  = 256 * 1024,   // 32Mbit / 4MB
+    W25Q_CHIP_512  = 512 * 1024,   // 64Mbit / 8MB
+    W25Q_CHIP_01   = 1024 * 1024,  // 128Mbit / 16MB
+    W25Q_CHIP_02   = 2048 * 1024,  // 256Mbit / 32MB
+    W25Q_CHIP_04   = 4096 * 1024,  // 512Mbit / 64MB
+    W25Q_CHIP_08   = 8192 * 1024,  // 1Gbit / 128MB
+    W25Q_CHIP_16   = 16 * 1024 * 1024 // 2Gbit / 256MB (W25Q128等)
+} w25q_chip_size_t;
+
+/* ===== 状态寄存器位定义 ===== */
+#define W25Q_STATUS_BUSY        0x01  // BUSY位
+#define W25Q_STATUS_WEL         0x02  // 写使能锁存位
+#define W25Q_STATUS_BP0         0x04  // 块保护位0
+#define W25Q_STATUS_BP1         0x08  // 块保护位1
+#define W25Q_STATUS_BP2         0x10  // 块保护位2
+#define W25Q_STATUS_SRWD        0x80  // 状态寄存器写保护
+
+/* ===== 芯片信息结构体 ===== */
+typedef struct {
+    uint16_t manufacturer_id;   // 制造商ID
+    uint8_t  device_id;         // 设备ID
+    uint8_t  memory_type;       // 存储类型
+    uint8_t  capacity_code;     // 容量代码
+    uint32_t flash_size;        // Flash容量(字节)
+    char     chip_name[32];     // 芯片名称
+} w25q_info_t;
+
+/* ===== 平台相关接口: 需要用户实现 ===== */
+
+/**
+ * @brief  平台相关: 延时函数 (毫秒)
+ * @param  ms: 延时毫秒数
+ */
+void w25q_platform_delay_ms(uint32_t ms);
+
+/**
+ * @brief  平台相关: SPI片选控制
+ * @param  select: 1=选中(拉低), 0=取消选中(拉高)
+ */
+void w25q_platform_cs_select(uint8_t select);
+
+/**
+ * @brief  平台相关: SPI传输一个字节
+ * @param  data: 要发送的数据
+ * @return 接收到的数据
+ */
+uint8_t w25q_platform_spi_transfer(uint8_t data);
+
+/**
+ * @brief  平台相关: 获取当前时间(毫秒)
+ * @return 当前时间(毫秒)
+ */
+uint32_t w25q_platform_get_millis(void);
+
+/* ===== 通用驱动接口 ===== */
+
+/**
+ * @brief  初始化W25Q Flash
+ * @param  config: 配置结构体指针
+ * @return 0=成功, -1=失败
+ */
+int w25q_init(w25q_config_t* config);
+
+/**
+ * @brief  读取Flash ID (制造商ID + 设备ID)
+ * @return 制造商ID << 8 | 设备ID
+ */
+uint16_t w25q_read_id(void);
+
+/**
+ * @brief  读取JEDEC ID并识别芯片
+ * @param  info: 芯片信息结构体指针
+ * @return 芯片容量(字节), 0表示未知
+ */
+uint32_t w25q_read_jedec_id(w25q_info_t* info);
+
+/**
+ * @brief  读取唯一ID (64位)
+ * @param  uid: 8字节的缓冲区
+ */
+void w25q_read_unique_id(uint8_t uid[8]);
+
+/**
+ * @brief  读取状态寄存器
+ * @return 状态寄存器值
+ */
+uint8_t w25q_read_status(void);
+
+/**
+ * @brief  等待Flash就绪 (检查BUSY位)
+ * @param  timeout_ms: 超时时间(毫秒)
+ * @return 0=就绪, -1=超时
+ */
+int w25q_wait_ready(uint32_t timeout_ms);
+
+/**
+ * @brief  写使能
+ */
+void w25q_write_enable(void);
+
+/**
+ * @brief  写禁能
+ */
+void w25q_write_disable(void);
+
+/**
+ * @brief  读取数据
+ * @param  addr: 起始地址
+ * @param  buf: 数据缓冲区
+ * @param  len: 读取长度
+ */
+void w25q_read(uint32_t addr, uint8_t* buf, uint32_t len);
+
+/**
+ * @brief  快速读取数据 (支持更高频率)
+ * @param  addr: 起始地址
+ * @param  buf: 数据缓冲区
+ * @param  len: 读取长度
+ */
+void w25q_fast_read(uint32_t addr, uint8_t* buf, uint32_t len);
+
+/**
+ * @brief  页编程 (写入一页数据，最多256字节)
+ * @param  addr: 起始地址 (必须页对齐，低8位为0)
+ * @param  buf: 数据缓冲区
+ * @param  len: 写入长度 (最多256字节)
+ * @return 0=成功, -1=失败
+ */
+int w25q_page_program(uint32_t addr, const uint8_t* buf, uint32_t len);
+
+/**
+ * @brief  写入数据 (自动处理页边界)
+ * @param  addr: 起始地址
+ * @param  buf: 数据缓冲区
+ * @param  len: 写入长度
+ * @return 0=成功, -1=失败
+ */
+int w25q_write(uint32_t addr, const uint8_t* buf, uint32_t len);
+
+/**
+ * @brief  扇区擦除 (4KB)
+ * @param  addr: 扇区地址 (必须4KB对齐)
+ * @return 0=成功, -1=超时
+ */
+int w25q_sector_erase(uint32_t addr);
+
+/**
+ * @brief  32KB块擦除
+ * @param  addr: 块地址 (必须32KB对齐)
+ * @return 0=成功, -1=超时
+ */
+int w25q_block32_erase(uint32_t addr);
+
+/**
+ * @brief  64KB块擦除
+ * @param  addr: 块地址 (必须64KB对齐)
+ * @return 0=成功, -1=超时
+ */
+int w25q_block64_erase(uint32_t addr);
+
+/**
+ * @brief  芯片全片擦除
+ * @return 0=成功, -1=超时
+ */
+int w25q_chip_erase(void);
+
+/**
+ * @brief  擦除后写入数据 (先擦除再写入)
+ * @param  addr: 起始地址
+ * @param  buf: 数据缓冲区
+ * @param  len: 写入长度
+ * @return 0=成功, -1=失败
+ */
+int w25q_erase_and_write(uint32_t addr, const uint8_t* buf, uint32_t len);
+
+/**
+ * @brief  设置SPI频率
+ * @param  hz: 频率(Hz)
+ * @note   需要平台支持才能动态修改
+ */
+void w25q_set_spi_frequency(uint32_t hz);
+
+/**
+ * @brief  获取检测到的Flash容量
+ * @return Flash容量(字节)
+ */
+uint32_t w25q_get_flash_size(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* W25Q128_H */
+@tianrking
+Author
+tianrking
+commented
+yesterday
+/**
+ * @file w25q128.c
+ * @brief W25Q系列SPI Flash驱动实现
+ * @note  便于移植到不同平台，只需实现底层SPI接口
+ */
+
+#include "w25q128.h"
+#include <string.h>
+
+/* ===== 全局变量 ===== */
+static w25q_config_t g_w25q_config;
+static uint32_t g_flash_size = 0;
+
+/* ===== 内部辅助函数 ===== */
+
+/**
+ * @brief 读取Flash ID (制造商ID + 设备ID)
+ * @return 制造商ID << 8 | 设备ID
+ */
+static inline uint16_t flash_read_id_raw(void) {
+    w25q_platform_cs_select(1);
+    w25q_platform_spi_transfer(W25Q_READ_ID);
+    uint8_t manuf_id = w25q_platform_spi_transfer(0xFF);
+    uint8_t device_id = w25q_platform_spi_transfer(0xFF);
+    w25q_platform_cs_select(0);
+    return (manuf_id << 8) | device_id;
+}
+
+/* ===== 通用驱动接口实现 ===== */
+
+/**
+ * @brief  初始化W25Q Flash
+ */
+int w25q_init(w25q_config_t* config) {
+    if (config == NULL) {
+        return -1;
+    }
+
+    // 保存配置
+    memcpy(&g_w25q_config, config, sizeof(w25q_config_t));
+
+    // CS默认为高电平(未选中)
+    w25q_platform_cs_select(0);
+
+    // 等待Flash上电稳定
+    w25q_platform_delay_ms(100);
+
+    return 0;
+}
+
+/**
+ * @brief  读取Flash ID (制造商ID + 设备ID)
+ */
+uint16_t w25q_read_id(void) {
+    return flash_read_id_raw();
+}
+
+/**
+ * @brief  读取JEDEC ID并识别芯片
+ */
+uint32_t w25q_read_jedec_id(w25q_info_t* info) {
+    w25q_platform_cs_select(1);
+    w25q_platform_spi_transfer(W25Q_READ_JEDEC_ID);
+
+    uint8_t manuf_id = w25q_platform_spi_transfer(0xFF);
+    uint8_t mem_type = w25q_platform_spi_transfer(0xFF);
+    uint8_t capacity = w25q_platform_spi_transfer(0xFF);
+
+    w25q_platform_cs_select(0);
+
+    // 填充info结构体
+    if (info != NULL) {
+        info->manufacturer_id = manuf_id;
+        info->memory_type = mem_type;
+        info->capacity_code = capacity;
+        info->flash_size = 0;
+        info->chip_name[0] = '\0';
+    }
+
+    // 根据容量字节识别芯片
+    uint32_t size = 0;
+    const char* chip_name = "Unknown";
+
+    // Winbond (0xEF) 系列
+    if (manuf_id == 0xEF && mem_type == 0x40) {
+        switch (capacity) {
+            case 0x10: size = 64 * 1024; chip_name = "W25Q64 (8MB)"; break;
+            case 0x11: size = 128 * 1024; chip_name = "W25Q128 (16MB)"; break;
+            case 0x12: size = 256 * 1024; chip_name = "W25Q256 (32MB)"; break;
+            case 0x13: size = 512 * 1024; chip_name = "W25Q512 (64MB)"; break;
+            case 0x14: size = 1024 * 1024; chip_name = "W25Q01 (128MB)"; break;
+            case 0x15: size = 2048 * 1024; chip_name = "W25Q02 (256MB)"; break;
+            case 0x16: size = 4096 * 1024; chip_name = "W25Q04 (512MB)"; break;
+            case 0x17: size = 8192 * 1024; chip_name = "W25Q08 (1GB)"; break;
+            case 0x18: size = 16 * 1024 * 1024; chip_name = "W25Q128 (16MB)"; break;
+        }
+    }
+    // MXIC (0xC2)
+    else if (manuf_id == 0xC2) {
+        switch (capacity) {
+            case 0x16: size = 4096 * 1024; chip_name = "MX25L04 (512MB)"; break;
+            case 0x17: size = 8192 * 1024; chip_name = "MX25L08 (1GB)"; break;
+            case 0x18: size = 16 * 1024 * 1024; chip_name = "MX25L16 (2GB)"; break;
+        }
+    }
+    // Atmel (0x1F)
+    else if (manuf_id == 0x1F) {
+        switch (capacity) {
+            case 0x18: size = 16 * 1024 * 1024; chip_name = "AT25QL128 (16MB)"; break;
+        }
+    }
+
+    if (info != NULL) {
+        info->flash_size = size;
+        strncpy(info->chip_name, chip_name, sizeof(info->chip_name) - 1);
+    }
+
+    g_flash_size = size;
+    return size;
+}
+
+/**
+ * @brief  读取唯一ID (64位)
+ */
+void w25q_read_unique_id(uint8_t uid[8]) {
+    w25q_platform_cs_select(1);
+    w25q_platform_spi_transfer(W25Q_READ_UNIQUE_ID);
+    w25q_platform_spi_transfer(0x00);  // Dummy
+    w25q_platform_spi_transfer(0x00);
+    w25q_platform_spi_transfer(0x00);
+    w25q_platform_spi_transfer(0x00);
+
+    for (int i = 0; i < 8; i++) {
+        uid[i] = w25q_platform_spi_transfer(0xFF);
+    }
+
+    w25q_platform_cs_select(0);
+}
+
+/**
+ * @brief  读取状态寄存器
+ */
+uint8_t w25q_read_status(void) {
+    w25q_platform_cs_select(1);
+    w25q_platform_spi_transfer(W25Q_READ_STATUS_REG);
+    uint8_t status = w25q_platform_spi_transfer(0xFF);
+    w25q_platform_cs_select(0);
+    return status;
+}
+
+/**
+ * @brief  等待Flash就绪
+ */
+int w25q_wait_ready(uint32_t timeout_ms) {
+    uint32_t start = w25q_platform_get_millis();
+    uint8_t status;
+
+    do {
+        w25q_platform_cs_select(1);
+        w25q_platform_spi_transfer(W25Q_READ_STATUS_REG);
+        status = w25q_platform_spi_transfer(0xFF);
+        w25q_platform_cs_select(0);
+
+        if (!(status & W25Q_STATUS_BUSY)) {
+            return 0;  // 就绪
+        }
+
+        if (w25q_platform_get_millis() - start > timeout_ms) {
+            return -1;  // 超时
+        }
+
+        w25q_platform_delay_ms(1);
+
+    } while (1);
+}
+
+/**
+ * @brief  写使能
+ */
+void w25q_write_enable(void) {
+    w25q_platform_cs_select(1);
+    w25q_platform_spi_transfer(W25Q_WRITE_ENABLE);
+    w25q_platform_cs_select(0);
+}
+
+/**
+ * @brief  写禁能
+ */
+void w25q_write_disable(void) {
+    w25q_platform_cs_select(1);
+    w25q_platform_spi_transfer(W25Q_WRITE_DISABLE);
+    w25q_platform_cs_select(0);
+}
+
+/**
+ * @brief  读取数据
+ */
+void w25q_read(uint32_t addr, uint8_t* buf, uint32_t len) {
+    w25q_platform_cs_select(1);
+
+    w25q_platform_spi_transfer(W25Q_READ_DATA);
+    w25q_platform_spi_transfer((addr >> 16) & 0xFF);
+    w25q_platform_spi_transfer((addr >> 8) & 0xFF);
+    w25q_platform_spi_transfer(addr & 0xFF);
+
+    for (uint32_t i = 0; i < len; i++) {
+        buf[i] = w25q_platform_spi_transfer(0xFF);
+    }
+
+    w25q_platform_cs_select(0);
+}
+
+/**
+ * @brief  快速读取数据
+ */
+void w25q_fast_read(uint32_t addr, uint8_t* buf, uint32_t len) {
+    w25q_platform_cs_select(1);
+
+    w25q_platform_spi_transfer(W25Q_FAST_READ);
+    w25q_platform_spi_transfer((addr >> 16) & 0xFF);
+    w25q_platform_spi_transfer((addr >> 8) & 0xFF);
+    w25q_platform_spi_transfer(addr & 0xFF);
+    w25q_platform_spi_transfer(0x00);  // Dummy字节
+
+    for (uint32_t i = 0; i < len; i++) {
+        buf[i] = w25q_platform_spi_transfer(0xFF);
+    }
+
+    w25q_platform_cs_select(0);
+}
+
+/**
+ * @brief  页编程
+ */
+int w25q_page_program(uint32_t addr, const uint8_t* buf, uint32_t len) {
+    if (len > W25Q_PAGE_SIZE) {
+        len = W25Q_PAGE_SIZE;
+    }
+
+    w25q_write_enable();
+
+    w25q_platform_cs_select(1);
+
+    w25q_platform_spi_transfer(W25Q_PAGE_PROGRAM);
+    w25q_platform_spi_transfer((addr >> 16) & 0xFF);
+    w25q_platform_spi_transfer((addr >> 8) & 0xFF);
+    w25q_platform_spi_transfer(addr & 0xFF);
+
+    for (uint32_t i = 0; i < len; i++) {
+        w25q_platform_spi_transfer(buf[i]);
+    }
+
+    w25q_platform_cs_select(0);
+
+    return w25q_wait_ready(5000);
+}
+
+/**
+ * @brief  写入数据 (自动处理页边界)
+ */
+int w25q_write(uint32_t addr, const uint8_t* buf, uint32_t len) {
+    uint32_t offset = 0;
+    uint32_t current_addr = addr;
+
+    while (offset < len) {
+        uint32_t page_space = W25Q_PAGE_SIZE - (current_addr % W25Q_PAGE_SIZE);
+        uint32_t write_len = (len - offset) < page_space ? (len - offset) : page_space;
+
+        if (w25q_page_program(current_addr, buf + offset, write_len) != 0) {
+            return -1;
+        }
+
+        offset += write_len;
+        current_addr += write_len;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief  扇区擦除 (4KB)
+ */
+int w25q_sector_erase(uint32_t addr) {
+    w25q_write_enable();
+
+    w25q_platform_cs_select(1);
+
+    w25q_platform_spi_transfer(W25Q_SECTOR_ERASE);
+    w25q_platform_spi_transfer((addr >> 16) & 0xFF);
+    w25q_platform_spi_transfer((addr >> 8) & 0xFF);
+    w25q_platform_spi_transfer(addr & 0xFF);
+
+    w25q_platform_cs_select(0);
+
+    return w25q_wait_ready(5000);
+}
+
+/**
+ * @brief  32KB块擦除
+ */
+int w25q_block32_erase(uint32_t addr) {
+    w25q_write_enable();
+
+    w25q_platform_cs_select(1);
+
+    w25q_platform_spi_transfer(W25Q_BLOCK_32K_ERASE);
+    w25q_platform_spi_transfer((addr >> 16) & 0xFF);
+    w25q_platform_spi_transfer((addr >> 8) & 0xFF);
+    w25q_platform_spi_transfer(addr & 0xFF);
+
+    w25q_platform_cs_select(0);
+
+    return w25q_wait_ready(10000);
+}
+
+/**
+ * @brief  64KB块擦除
+ */
+int w25q_block64_erase(uint32_t addr) {
+    w25q_write_enable();
+
+    w25q_platform_cs_select(1);
+
+    w25q_platform_spi_transfer(W25Q_BLOCK_64K_ERASE);
+    w25q_platform_spi_transfer((addr >> 16) & 0xFF);
+    w25q_platform_spi_transfer((addr >> 8) & 0xFF);
+    w25q_platform_spi_transfer(addr & 0xFF);
+
+    w25q_platform_cs_select(0);
+
+    return w25q_wait_ready(10000);
+}
+
+/**
+ * @brief  芯片全片擦除
+ */
+int w25q_chip_erase(void) {
+    w25q_write_enable();
+
+    w25q_platform_cs_select(1);
+    w25q_platform_spi_transfer(W25Q_CHIP_ERASE);
+    w25q_platform_cs_select(0);
+
+    // 全片擦除需要更长时间
+    return w25q_wait_ready(60000);  // 60秒超时
+}
+
+/**
+ * @brief  擦除后写入数据 (先擦除再写入)
+ */
+int w25q_erase_and_write(uint32_t addr, const uint8_t* buf, uint32_t len) {
+    uint32_t start_sector = addr / W25Q_SECTOR_SIZE;
+    uint32_t end_sector = (addr + len - 1) / W25Q_SECTOR_SIZE;
+
+    // 擦除相关扇区
+    for (uint32_t sector = start_sector; sector <= end_sector; sector++) {
+        if (w25q_sector_erase(sector * W25Q_SECTOR_SIZE) != 0) {
+            return -1;
+        }
+    }
+
+    return w25q_write(addr, buf, len);
+}
+
+/**
+ * @brief  设置SPI频率
+ */
+void w25q_set_spi_frequency(uint32_t hz) {
+    g_w25q_config.spi_frequency = hz;
+    // 需要平台支持才能动态修改
+}
+
+/**
+ * @brief  获取检测到的Flash容量
+ */
+uint32_t w25q_get_flash_size(void) {
+    return g_flash_size;
+}

@@ -160,6 +160,10 @@ extern void start_10s_speed_test(void);
 extern void start_simple_abc_test(void);
 extern void set_ble_counter_value(int value);
 
+// W25Q128 Flash 驱动
+extern int w25q128_init(void);
+extern int w25q128_test(void);
+
 void start_10s_speed_test(void)
 {
     extern bool opus_mode;
@@ -427,6 +431,16 @@ void app_main()
 
     // 创建 PA7 按键检测任务
     task_create(pa7_key_polling_task_handle, NULL, "pa7_key_polling");
+
+    // 初始化 W25Q128 Flash 并进行读写测试
+    printf("\n>>> Initializing W25Q128 Flash...\n");
+    if (w25q128_init() == 0) {
+        printf(">>> W25Q128 Flash initialized successfully!\n");
+        printf(">>> Starting W25Q128 read/write test...\n");
+        w25q128_test();
+    } else {
+        printf(">>> W25Q128 Flash initialization FAILED!\n");
+    }
 }
 
 int __attribute__((weak)) eSystemConfirmStopStatus(void)
