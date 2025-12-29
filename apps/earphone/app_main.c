@@ -148,8 +148,12 @@ const struct task_info task_info_table[] = {
 
 APP_VAR app_var;
 
-// 定义 PE6 控制引脚
-#define PE6_CTRL_PIN   IO_PORTE_06
+// 定义 PE6/PG8 控制引脚（同一物理引脚的不同功能）
+#define PE6_CTRL_PIN   IO_PORTE_06   // PE6 GPIO 输出
+#define PG8_CTRL_PIN   IO_PORTG_08   // PG8 配合输入
+
+// 外部声明 sdpg_config 函数（SD Power Gate 控制）
+extern void sdpg_config(int enable);
 
 // W25Q128 Flash 驱动
 extern int w25q128_init(void);
@@ -334,13 +338,28 @@ void app_main()
         bone_task_is_open = true;
     }
 
-    // 初始化 PE6 引脚为高电平
-    gpio_set_direction(PE6_CTRL_PIN, 0);  // 输出模式
-    gpio_set_die(PE6_CTRL_PIN, 1);        // 使能
-    gpio_set_pull_up(PE6_CTRL_PIN, 0);    // 无上拉
-    gpio_set_pull_down(PE6_CTRL_PIN, 0);  // 无下拉
-    gpio_write(PE6_CTRL_PIN, 1);          // 设置为高电平
-    printf(">>> PE6 pin initialized to HIGH\n");
+    // 初始化 PE6/PG8 引脚（PE6 输出 + PG8 输入配合）
+    // PE6 配置为输出高电平
+    // 1. 先把 PE6 设为高电平强驱输出
+    // 作用：预先将电压拉高，防止开启 SDPG 瞬间产生抖动
+    gpio_set_direction(PE6_CTRL_PIN, 0);      
+    gpio_set_hd0(PE6_CTRL_PIN, 1);            
+    gpio_write(PE6_CTRL_PIN, 1);              
+    
+    // 2. 把 PG8 设为输入
+    // 作用：非常重要！因为物理上是同一个脚。
+    // 如果 PG8 不小心设为输出低电平，会和 PE6 的高电平内部短路。
+    // 将 PG8 设为高阻态输入(Input)是为了避让，把控制权完全交给 PE6/SDPG。
+    gpio_set_direction(PG8_CTRL_PIN, 1);      
+    gpio_set_die(PG8_CTRL_PIN, 1); // 开启数字输入功能（可选，如果不需要读取状态，设为0也可以）
+    
+    // 3. 开启 SD 专用电源门
+    // 作用：这是真正的供电主力。
+    sdpg_config(1);
+
+ 
+    printf(">>> PE6: sdpg_config(1) enabled\n");
+    printf(">>> PE6/PG8 powered ON (PE6 output + PG8 input + SDPG)\n");
 
     // 初始化 W25Q128 Flash 并进行读写测试
     printf("\n>>> Initializing W25Q128 Flash...\n");

@@ -7,7 +7,10 @@
       "Bash(ls:*)",
       "Bash(./download_app_ota.bat:*)",
       "Bash(find:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []

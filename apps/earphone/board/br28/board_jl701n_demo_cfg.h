@@ -31,7 +31,8 @@
 //*********************************************************************************//
 /*软件IIC设置*/
 #define TCFG_SW_I2C0_CLK_PORT               IO_PORTG_07                             //软件IIC  CLK脚选择
-#define TCFG_SW_I2C0_DAT_PORT               IO_PORTG_08                             //软件IIC  DAT脚选择
+// #define TCFG_SW_I2C0_DAT_PORT               IO_PORTG_08
+#define TCFG_SW_I2C0_DAT_PORT               NO_CONFIG_PORT                         //软件IIC  DAT脚选择 (PG8禁用，与PE6是同一引脚)
 #define TCFG_SW_I2C0_DELAY_CNT              10                                      //IIC延时参数，影响通讯时钟频率
 
 /*硬件IIC端口选择
@@ -584,7 +585,7 @@ DAC硬件上的连接方式,可选的配置：
 #elif TCFG_AUDIO_DUAL_MIC_ENABLE
 #define TCFG_AUDIO_ADC_MIC_CHA				(AUDIO_ADC_MIC_0 | AUDIO_ADC_MIC_1)
 #else
-#define TCFG_AUDIO_ADC_MIC_CHA				AUDIO_ADC_MIC_0
+#define TCFG_AUDIO_ADC_MIC_CHA				AUDIO_ADC_MIC_3
 #endif/*TCFG_AUDIO_TRIPLE_MIC_ENABLE*/
 
 /*

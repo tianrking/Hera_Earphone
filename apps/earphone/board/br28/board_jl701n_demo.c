@@ -333,13 +333,13 @@ const struct lp_touch_key_platform_data lp_touch_key_config = {
 
 	.ch[2].enable = TCFG_LP_TOUCH_KEY2_EN,
 	.ch[2].wakeup_enable = TCFG_LP_TOUCH_KEY2_WAKEUP_EN,
-	.ch[2].port = IO_PORTB_02,
+	.ch[2].port = IO_PORTG_06,  // TK_MICP - 触摸按键正极
 	.ch[2].sensitivity = TCFG_LP_TOUCH_KEY2_SENSITIVITY,
 	.ch[2].key_value = 1,
 
 	.ch[3].enable = TCFG_LP_TOUCH_KEY3_EN,
 	.ch[3].wakeup_enable = TCFG_LP_TOUCH_KEY3_WAKEUP_EN,
-	.ch[3].port = IO_PORTB_04,
+	.ch[3].port = IO_PORTG_05,  // TKI_MICN - 触摸按键负极（参考）
 	.ch[3].sensitivity = TCFG_LP_TOUCH_KEY3_SENSITIVITY,
 	.ch[3].key_value = 2,
 

@@ -128,10 +128,15 @@ static u8 soft_spi_transfer_byte(u8 tx_byte)
  */
 int w25q128_init(void)
 {
+    // log_info("W25Q128: Initializing 3-wire SPI...");
+    // log_info("  IO   = PG0 (0x%02x) - MOSI/MISO shared", W25Q128_IO_PIN);
+    // log_info("  CS   = PB2 (0x%02x)", W25Q128_CS_PIN);
+    // log_info("  CLK  = PB1 (0x%02x)", W25Q128_CLK_PIN);
+
     log_info("W25Q128: Initializing 3-wire SPI...");
-    log_info("  IO   = PG0 (0x%02x) - MOSI/MISO shared", W25Q128_IO_PIN);
-    log_info("  CS   = PB2 (0x%02x)", W25Q128_CS_PIN);
-    log_info("  CLK  = PB1 (0x%02x)", W25Q128_CLK_PIN);
+    log_info("  IO   = IO_PORTC_05 (0x%02x) - MOSI/MISO shared", W25Q128_IO_PIN);
+    log_info("  CS   = IO_PORTC_03 (0x%02x)", W25Q128_CS_PIN);
+    log_info("  CLK  = IO_PORTC_04 (0x%02x)", W25Q128_CLK_PIN);
 
     // 配置 IO 引脚 - 默认为输出模式
     gpio_set_direction(W25Q128_IO_PIN, 0);
