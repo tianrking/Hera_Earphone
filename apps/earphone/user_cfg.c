@@ -31,7 +31,7 @@ BT_CONFIG bt_cfg = {
     .tws_local_addr  = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
     .rf_power        = 10,
     .dac_analog_gain = 25,
-    .mic_analog_gain = 7,
+    .mic_analog_gain = 15,       
     .tws_device_indicate = 0x6688,
 };
 
@@ -153,7 +153,7 @@ u8 get_tone_vol(void)
     return (audio_cfg.tone_vol);
 }
 
-#define USE_CONFIG_BIN_FILE                  1
+#define USE_CONFIG_BIN_FILE                  0
 
 #define USE_CONFIG_STATUS_SETTING            1                          //状态设置，包括灯状态和提示音
 #define USE_CONFIG_AUDIO_SETTING             USE_CONFIG_BIN_FILE        //音频设置
@@ -287,10 +287,10 @@ void cfg_file_parse(u8 idx)
         log_info("aec cfg read succ\n");
         log_info_hexdump(&aec, sizeof(aec));
 
-        app_var.aec_mic_gain = aec.mic_again;
-        app_var.aec_mic1_gain = aec.mic_again;
-        app_var.aec_mic2_gain = aec.mic_again;
-        app_var.aec_mic3_gain = aec.mic_again;
+        app_var.aec_mic_gain = 18;
+        app_var.aec_mic1_gain =18;
+        app_var.aec_mic2_gain =18;
+        app_var.aec_mic3_gain =18;
 #if TCFG_AUDIO_DUAL_MIC_ENABLE
 #if ((defined TCFG_AUDIO_DMS_SEL) && (TCFG_AUDIO_DMS_SEL == DMS_FLEXIBLE))
         app_var.aec_mic1_gain = aec.mic1_again;
@@ -329,8 +329,8 @@ void cfg_file_parse(u8 idx)
 
         app_var.aec_mic_gain = 12;
         app_var.aec_mic1_gain = 12;
-        app_var.aec_mic2_gain = 1;
-        app_var.aec_mic3_gain = 1;
+        app_var.aec_mic2_gain = 12;
+        app_var.aec_mic3_gain = 12;
         app_var.aec_dac_gain = 12;/*初始化默认值要注意不能大于芯片支持最大模拟音量*/
     }
     log_info("CVP_cfg Mic0_gain:%d Mic1_gain:%d Mic2_gain:%d Mic3_gain:%d DAC_Gain:%d",
