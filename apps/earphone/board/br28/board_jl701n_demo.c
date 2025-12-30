@@ -229,7 +229,7 @@ struct adc_platform_data adc_data = {
     .mic3_bias_res   = 4,
 /*MIC LDO电压档位设置,也会影响MIC的偏置电压
     3:2.0v  4:2.2v  5:2.4v  6:2.6v  7:2.8v */
-	.mic_ldo_vsel  = 5,
+	.mic_ldo_vsel  = 7,
  //mic的去直流dcc寄存器配置值,可配0到15,数值越大,其高通转折点越低
     .mic_dcc       = 8,
 	/*ADC低功耗等级,越大功耗越低，对应影响THD和底噪, 范围 (0 - 2)*/

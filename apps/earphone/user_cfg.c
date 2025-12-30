@@ -153,12 +153,12 @@ u8 get_tone_vol(void)
     return (audio_cfg.tone_vol);
 }
 
-#define USE_CONFIG_BIN_FILE                  0
+#define USE_CONFIG_BIN_FILE                  1
 
 #define USE_CONFIG_STATUS_SETTING            1                          //状态设置，包括灯状态和提示音
 #define USE_CONFIG_AUDIO_SETTING             USE_CONFIG_BIN_FILE        //音频设置
 #define USE_CONFIG_CHARGE_SETTING            USE_CONFIG_BIN_FILE        //充电设置
-#define USE_CONFIG_KEY_SETTING               USE_CONFIG_BIN_FILE        //按键消息设置
+#define USE_CONFIG_KEY_SETTING               0//USE_CONFIG_BIN_FILE        //按键消息设置
 #define USE_CONFIG_MIC_TYPE_SETTING          USE_CONFIG_BIN_FILE        //MIC类型设置
 #define USE_CONFIG_LOWPOWER_V_SETTING        USE_CONFIG_BIN_FILE        //低电提示设置
 #define USE_CONFIG_AUTO_OFF_SETTING          USE_CONFIG_BIN_FILE        //自动关机时间设置
