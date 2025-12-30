@@ -287,10 +287,10 @@ void cfg_file_parse(u8 idx)
         log_info("aec cfg read succ\n");
         log_info_hexdump(&aec, sizeof(aec));
 
-        app_var.aec_mic_gain = 18;
-        app_var.aec_mic1_gain =18;
-        app_var.aec_mic2_gain =18;
-        app_var.aec_mic3_gain =18;
+        app_var.aec_mic_gain = 19;
+        app_var.aec_mic1_gain =19;
+        app_var.aec_mic2_gain =19;
+        app_var.aec_mic3_gain =19;
 #if TCFG_AUDIO_DUAL_MIC_ENABLE
 #if ((defined TCFG_AUDIO_DMS_SEL) && (TCFG_AUDIO_DMS_SEL == DMS_FLEXIBLE))
         app_var.aec_mic1_gain = aec.mic1_again;
