@@ -60,6 +60,7 @@
 
 #define TEST_SEND_DATA_RATE         1  //测试
 #define PRINT_DMA_DATA_EN           0
+#define AE04_SEND_DEBUG_PATTERN     0
 
 
 #if 1
@@ -313,6 +314,8 @@ u8 send_index = 0;
 int failed_count = 0;
 void test_data_send_packet(void)
 {
+    static const u8 ae04_dbg_pattern[] = "1122334455";
+    static u8 ae04_dbg_counter = 0;
     u32 vaild_len = get_buffer_vaild_len(0);
     // if (vaild_len) {
     //     /* printf("\n---test_data_len = %d---\n",vaild_len); */
@@ -326,6 +329,23 @@ void test_data_send_packet(void)
     if (opus_mode) {
         memset(opus_packages + opus_idx * OPUS_PACKAGE_BYTE, 0, OPUS_PACKAGE_BYTE);
         opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = vad_is_activate;
+#if AE04_SEND_DEBUG_PATTERN
+        memcpy(
+            opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1,
+            ae04_dbg_pattern,
+            sizeof(ae04_dbg_pattern) - 1
+        );
+        memcpy(
+            opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE,
+            ae04_dbg_pattern,
+            sizeof(ae04_dbg_pattern) - 1
+        );
+        // Put a changing byte in mic/dec payload so app-side latest-hex can
+        // quickly confirm packets are updating in real time.
+        opus_packages[opus_idx * OPUS_PACKAGE_BYTE + 1] = ae04_dbg_counter;
+        opus_packages[opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE] = (u8)(ae04_dbg_counter ^ 0xFF);
+        ae04_dbg_counter++;
+#else
         if (!opus_mic_buffer_sent) {
             memcpy(
                 opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1,
@@ -340,6 +360,7 @@ void test_data_send_packet(void)
                 OPUS_PART_BYTE
             );
         }
+#endif
         opus_packages[(opus_idx + 1) * OPUS_PACKAGE_BYTE - DEBUG_BYTE] = send_index;
         int ret = app_send_user_data(
             ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
