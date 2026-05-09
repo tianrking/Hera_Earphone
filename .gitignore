@@ -93,3 +93,9 @@ cpu/br28/tools/sdk.map
 
 # .vscode
 .vscode/settings.json
+
+# local debug and IDE artifacts
+debug_logs/
+*.si4project/
+_tmp_*.bin
+OK.md
