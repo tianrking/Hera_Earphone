@@ -346,6 +346,9 @@ void test_data_send_packet(void)
         opus_packages[opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE] = (u8)(ae04_dbg_counter ^ 0xFF);
         ae04_dbg_counter++;
 #else
+        if (opus_mic_buffer_sent) {
+            return;
+        }
         if (!opus_mic_buffer_sent) {
             memcpy(
                 opus_packages + opus_idx * OPUS_PACKAGE_BYTE + 1,
@@ -369,6 +372,10 @@ void test_data_send_packet(void)
             ATT_OP_AUTO_READ_CCC
         );
         if (ret == 0) {
+#if !AE04_SEND_DEBUG_PATTERN
+            opus_mic_buffer_sent = true;
+            opus_dec_buffer_sent = true;
+#endif
             opus_idx = (opus_idx + 1) % MAX_CONFLICT_COUNT;
             send_index++;
             failed_count = 0;
@@ -775,6 +782,8 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
         att_set_ccc_config(handle, buffer[0]);
         if (buffer[0]) {
             opus_mode = true;
+            opus_mic_buffer_sent = true;
+            opus_dec_buffer_sent = true;
             mic_rec_clock_set();
             audio_mic_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
             audio_dec_enc_open(rec_enc_dec_output, AUDIO_CODING_OPUS, 0 << 6);
