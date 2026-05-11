@@ -17,6 +17,8 @@
 #include "dev_manager/dev_manager.h"
 #include "update_loader_download.h"
 #include "fft_and_pca.h"
+#include "w25q128.h"
+#include "string.h"
 
 #ifndef CONFIG_MEDIA_NEW_ENABLE
 #ifndef CONFIG_MEDIA_DEVELOP_ENABLE
@@ -148,6 +150,152 @@ const struct task_info task_info_table[] = {
 
 
 APP_VAR app_var;
+
+#if (TCFG_W25Q128_ENABLE && TCFG_W25Q128_COUNTER_TEST_ENABLE)
+static void w25q128_counter_test_task(void *priv);
+#endif
+
+static void w25q128_boot_probe(void)
+{
+#if TCFG_W25Q128_ENABLE
+    printf("\n>>> Initializing W25Q128 Flash...\n");
+    if (w25q128_init() == 0) {
+        printf(">>> W25Q128 Flash initialized successfully!\n");
+#if TCFG_W25Q128_BOOT_TEST_ENABLE
+        printf(">>> Starting W25Q128 read/write test...\n");
+        w25q128_test();
+#endif
+#if TCFG_W25Q128_COUNTER_TEST_ENABLE
+        int task_ret = task_create(w25q128_counter_test_task, NULL, "w25q_cnt");
+        if (task_ret == 0) {
+            printf(">>> W25Q128 counter test task created\n");
+        } else {
+            printf(">>> W25Q128 counter test task create failed! ret=%d\n", task_ret);
+        }
+#endif
+    } else {
+        printf(">>> W25Q128 Flash initialization FAILED!\n");
+    }
+#endif
+}
+
+#if (TCFG_W25Q128_ENABLE && TCFG_W25Q128_COUNTER_TEST_ENABLE)
+#define W25Q128_COUNTER_TEST_ADDR       0x001000
+#define W25Q128_COUNTER_RECORD_MAGIC    0x57323551
+#define W25Q128_COUNTER_RECORD_SIZE     12
+#define W25Q128_COUNTER_RECORDS_MAX     (W25Q128_SECTOR_SIZE / W25Q128_COUNTER_RECORD_SIZE)
+
+static void w25q128_u32_to_le(u8 *buf, u32 value)
+{
+    buf[0] = value & 0xff;
+    buf[1] = (value >> 8) & 0xff;
+    buf[2] = (value >> 16) & 0xff;
+    buf[3] = (value >> 24) & 0xff;
+}
+
+static u32 w25q128_le_to_u32(const u8 *buf)
+{
+    return ((u32)buf[0]) |
+           ((u32)buf[1] << 8) |
+           ((u32)buf[2] << 16) |
+           ((u32)buf[3] << 24);
+}
+
+static int w25q128_counter_find_tail(u32 *next_index, u32 *next_value)
+{
+    u8 record[W25Q128_COUNTER_RECORD_SIZE];
+    u32 last_value = 0;
+    u32 index;
+
+    for (index = 0; index < W25Q128_COUNTER_RECORDS_MAX; index++) {
+        u32 addr = W25Q128_COUNTER_TEST_ADDR + index * W25Q128_COUNTER_RECORD_SIZE;
+
+        if (w25q128_read_data(addr, record, sizeof(record)) != 0) {
+            return -1;
+        }
+
+        u32 magic = w25q128_le_to_u32(&record[0]);
+        u32 value = w25q128_le_to_u32(&record[4]);
+        u32 value_inv = w25q128_le_to_u32(&record[8]);
+
+        if (magic == 0xffffffff && value == 0xffffffff && value_inv == 0xffffffff) {
+            *next_index = index;
+            *next_value = (index == 0) ? 1 : (last_value + 1);
+            return 0;
+        }
+
+        if (magic != W25Q128_COUNTER_RECORD_MAGIC || value_inv != ~value) {
+            printf(">>> W25Q128 counter record broken at index=%u, erase test sector\n", index);
+            return -2;
+        }
+
+        last_value = value;
+    }
+
+    *next_index = W25Q128_COUNTER_RECORDS_MAX;
+    *next_value = last_value + 1;
+    return 0;
+}
+
+static int w25q128_counter_write_record(u32 index, u32 value)
+{
+    u8 write_buf[W25Q128_COUNTER_RECORD_SIZE];
+    u8 read_buf[W25Q128_COUNTER_RECORD_SIZE];
+    u32 addr = W25Q128_COUNTER_TEST_ADDR + index * W25Q128_COUNTER_RECORD_SIZE;
+
+    w25q128_u32_to_le(&write_buf[0], W25Q128_COUNTER_RECORD_MAGIC);
+    w25q128_u32_to_le(&write_buf[4], value);
+    w25q128_u32_to_le(&write_buf[8], ~value);
+
+    if (w25q128_write_data(addr, write_buf, sizeof(write_buf)) != 0) {
+        printf(">>> W25Q128 counter write failed: index=%u value=%u\n", index, value);
+        return -1;
+    }
+
+    if (w25q128_read_data(addr, read_buf, sizeof(read_buf)) != 0) {
+        printf(">>> W25Q128 counter readback failed: index=%u\n", index);
+        return -2;
+    }
+
+    if (memcmp(write_buf, read_buf, sizeof(write_buf)) != 0) {
+        printf(">>> W25Q128 counter verify mismatch: index=%u value=%u\n", index, value);
+        printf(">>> readback: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+               read_buf[0], read_buf[1], read_buf[2], read_buf[3],
+               read_buf[4], read_buf[5], read_buf[6], read_buf[7],
+               read_buf[8], read_buf[9], read_buf[10], read_buf[11]);
+        return -3;
+    }
+
+    printf(">>> W25Q128 counter OK: index=%u addr=0x%06x value=%u\n", index, addr, value);
+    return 0;
+}
+
+static void w25q128_counter_test_task(void *priv)
+{
+    u32 index = 0;
+    u32 value = 1;
+
+    printf(">>> W25Q128 counter append test start, sector=0x%06x\n", W25Q128_COUNTER_TEST_ADDR);
+
+    while (1) {
+        int ret = w25q128_counter_find_tail(&index, &value);
+
+        if (ret != 0 || index >= W25Q128_COUNTER_RECORDS_MAX) {
+            printf(">>> W25Q128 counter erase sector=0x%06x\n", W25Q128_COUNTER_TEST_ADDR);
+            if (w25q128_sector_erase(W25Q128_COUNTER_TEST_ADDR) != 0) {
+                printf(">>> W25Q128 counter erase failed, retry later\n");
+                os_time_dly(100);
+                continue;
+            }
+            index = 0;
+            value = 1;
+        }
+
+        w25q128_counter_write_record(index, value);
+        os_time_dly(100);
+    }
+}
+#endif
 
 // 定义PA7按键引脚
 #define KEY_PA7_PIN    IO_PORTA_07
@@ -393,6 +541,8 @@ void app_main()
     } else {
         printf("PA7 key task create failed! ret=%d\n", task_ret);
     }
+
+    w25q128_boot_probe();
 }
 
 int __attribute__((weak)) eSystemConfirmStopStatus(void)

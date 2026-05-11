@@ -63,6 +63,18 @@
 #define TCFG_HW_SPI2_MODE                   SPI_MODE_BIDIR_1BIT
 #define TCFG_HW_SPI2_ROLE                   SPI_ROLE_MASTER
 
+// W25Q128 external flash on SD-style 3-wire wiring.
+#define TCFG_W25Q128_ENABLE                 ENABLE_THIS_MOUDLE
+#define TCFG_W25Q128_SFC_TRY_ENABLE         DISABLE_THIS_MOUDLE
+#define TCFG_W25Q128_BOOT_TEST_ENABLE       DISABLE_THIS_MOUDLE
+#define TCFG_W25Q128_COUNTER_TEST_ENABLE    ENABLE_THIS_MOUDLE
+#define W25Q128_3WIRE_ENABLE                1
+#define W25Q128_IO_PIN                      IO_PORTC_05
+#define W25Q128_CS_PIN                      IO_PORTC_03
+#define W25Q128_CLK_PIN                     IO_PORTC_04
+#define W25Q128_POWER_PIN                   IO_PORTE_06
+#define W25Q128_POWER_SENSE_PIN             IO_PORTG_08
+
 //*********************************************************************************//
 //                                  SD 配置                                        //
 //*********************************************************************************//
