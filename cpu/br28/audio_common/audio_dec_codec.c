@@ -45,48 +45,56 @@ struct dec_enc_hdl {
 };
 
 static struct dec_enc_hdl *dec_enc = NULL;
+static struct dec_enc_hdl *dec_ref_enc = NULL;
 
-static void dec_enc_output_func_register(int (*output_func)(void *priv, void *buf, int len))
+static void dec_enc_output_func_register(struct dec_enc_hdl *hdl, int (*output_func)(void *priv, void *buf, int len))
 {
-    if (dec_enc) {
-        dec_enc->dec_output = output_func;
+    if (hdl) {
+        hdl->dec_output = output_func;
+    }
+}
+
+static void dec_enc_resume_hdl(struct dec_enc_hdl *hdl)
+{
+    if (hdl) {
+        os_sem_post(&hdl->pcm_frame_sem);
     }
 }
 
 void dec_enc_resume(void)
 {
-    if (dec_enc) {
-        os_sem_post(&dec_enc->pcm_frame_sem);
-    }
+    dec_enc_resume_hdl(dec_enc);
 }
 
 static int dec_enc_pcm_get(struct audio_encoder *encoder, s16 **frame, u16 frame_len)
 {
     int pcm_len = 0;
-    if (dec_enc == NULL) {
+    struct dec_enc_hdl *hdl = container_of(encoder, struct dec_enc_hdl, encoder);
+
+    if (hdl == NULL) {
         r_printf("dec_enc NULL\n");
         return 0;
     }
 
 
     /* putchar('!'); */
-    if ((&dec_enc->pcm_in_cbuf)->data_len < frame_len) {
+    if ((&hdl->pcm_in_cbuf)->data_len < frame_len) {
         /* putchar('#'); */
-        os_sem_set(&dec_enc->pcm_frame_sem, 0);
-        os_sem_pend(&dec_enc->pcm_frame_sem, 5);
-        if (dec_enc == NULL) {
+        os_sem_set(&hdl->pcm_frame_sem, 0);
+        os_sem_pend(&hdl->pcm_frame_sem, 5);
+        if (hdl == NULL) {
             printf("dec_enc is NULL\n");
             return 0;
         }
     }
 
-    pcm_len = cbuf_read(&dec_enc->pcm_in_cbuf, dec_enc->pcm_frame, frame_len);
+    pcm_len = cbuf_read(&hdl->pcm_in_cbuf, hdl->pcm_frame, frame_len);
     if (pcm_len != frame_len) {
         putchar('L');
     }
     /* putchar('D'); */
 
-    *frame = dec_enc->pcm_frame;
+    *frame = hdl->pcm_frame;
     return pcm_len;
 }
 
@@ -109,13 +117,15 @@ static int dec_enc_probe_handler(struct audio_encoder *encoder)
 
 static int dec_enc_output_handler(struct audio_encoder *encoder, u8 *frame, int len)
 {
+    struct dec_enc_hdl *hdl = container_of(encoder, struct dec_enc_hdl, encoder);
+
     if (encoder == NULL) {
         r_printf("encoder NULL");
     }
     wdt_clear();
     /* printf("mic frame len:%d \n",len); */
-    if (dec_enc && dec_enc->dec_output) {
-        dec_enc->dec_output(NULL, frame, len);
+    if (hdl && hdl->dec_output) {
+        hdl->dec_output(NULL, frame, len);
     }
     /* put_buf(frame, 16); */
     return len;
@@ -138,16 +148,26 @@ static void dec_enc_event_handler(struct audio_decoder *decoder, int argc, int *
 
 
 
-void adc_dec_output_handler(s16 *data, int len)
+static void dec_enc_pcm_input(struct dec_enc_hdl *hdl, s16 *data, int len)
 {
-    if (dec_enc) {
-        u16 wlen = cbuf_write(&dec_enc->pcm_in_cbuf, data, len);
+    if (hdl) {
+        u16 wlen = cbuf_write(&hdl->pcm_in_cbuf, data, len);
         if (wlen != len) {
             putchar('@');
         }
-        audio_encoder_resume(&dec_enc->encoder);
-        dec_enc_resume();
+        audio_encoder_resume(&hdl->encoder);
+        dec_enc_resume_hdl(hdl);
     }
+}
+
+void adc_dec_output_handler(s16 *data, int len)
+{
+    dec_enc_pcm_input(dec_enc, data, len);
+}
+
+void adc_dec_ref_output_handler(s16 *data, int len)
+{
+    dec_enc_pcm_input(dec_ref_enc, data, len);
 }
 
 
@@ -157,10 +177,11 @@ void adc_dec_output_handler(s16 *data, int len)
 
 
 extern struct audio_adc_hdl adc_hdl;
-int audio_dec_enc_open(int (*dec_output)(void *priv, void *buf, int len), u32 code_type, u8 ai_type)
+static int audio_dec_enc_open_hdl(struct dec_enc_hdl **enc_slot, int (*dec_output)(void *priv, void *buf, int len), u32 code_type, u8 ai_type)
 {
     int err;
     struct audio_fmt fmt;
+    struct dec_enc_hdl *hdl;
 
     switch (code_type) {
     case AUDIO_CODING_OPUS:
@@ -191,30 +212,32 @@ int audio_dec_enc_open(int (*dec_output)(void *priv, void *buf, int len), u32 co
         }
         audio_encoder_task_create(encode_task, "audio_enc");
     }
-    if (!dec_enc) {
-        dec_enc = zalloc(sizeof(*dec_enc));
-        if (!dec_enc) {
+    if (!(*enc_slot)) {
+        *enc_slot = zalloc(sizeof(**enc_slot));
+        if (!(*enc_slot)) {
             printf("dec_enc NULL !!!\n");
+            return -ENOMEM;
         }
-        memset(dec_enc, 0x00, sizeof(*dec_enc));
+        memset(*enc_slot, 0x00, sizeof(**enc_slot));
     }
 
-    dec_enc_output_func_register(dec_output);
-    cbuf_init(&dec_enc->pcm_in_cbuf, dec_enc->in_cbuf_buf, MIC_ENC_IN_SIZE * 4);
-    os_sem_create(&dec_enc->pcm_frame_sem, 0);
-    audio_encoder_open(&dec_enc->encoder, &dec_enc_input, encode_task);
-    audio_encoder_set_handler(&dec_enc->encoder, &dec_enc_handler);
-    audio_encoder_set_fmt(&dec_enc->encoder, &fmt);
-    audio_encoder_set_event_handler(&dec_enc->encoder, dec_enc_event_handler, 0);
-    audio_encoder_set_output_buffs(&dec_enc->encoder, dec_enc->output_frame,
-                                   sizeof(dec_enc->output_frame), 1);
-    if (!dec_enc->encoder.enc_priv) {
+    hdl = *enc_slot;
+    dec_enc_output_func_register(hdl, dec_output);
+    cbuf_init(&hdl->pcm_in_cbuf, hdl->in_cbuf_buf, MIC_ENC_IN_SIZE * 4);
+    os_sem_create(&hdl->pcm_frame_sem, 0);
+    audio_encoder_open(&hdl->encoder, &dec_enc_input, encode_task);
+    audio_encoder_set_handler(&hdl->encoder, &dec_enc_handler);
+    audio_encoder_set_fmt(&hdl->encoder, &fmt);
+    audio_encoder_set_event_handler(&hdl->encoder, dec_enc_event_handler, 0);
+    audio_encoder_set_output_buffs(&hdl->encoder, hdl->output_frame,
+                                   sizeof(hdl->output_frame), 1);
+    if (!hdl->encoder.enc_priv) {
         log_e("encoder err, maybe coding(0x%x) disable \n", fmt.coding_type);
         err = -EINVAL;
         goto __err;
     }
 
-    int start_err = audio_encoder_start(&dec_enc->encoder);
+    int start_err = audio_encoder_start(&hdl->encoder);
 
 // #if MIC_USE_MIC_CHANNEL
 //     fmt.sample_rate = 16000;
@@ -250,22 +273,32 @@ int audio_dec_enc_open(int (*dec_output)(void *priv, void *buf, int len), u32 co
 
     return 0;
 __err:
-    audio_encoder_close(&dec_enc->encoder);
+    audio_encoder_close(&hdl->encoder);
 
     local_irq_disable();
-    free(dec_enc);
-    dec_enc = NULL;
+    free(hdl);
+    *enc_slot = NULL;
     local_irq_enable();
 
     return err;
 }
 
-
-
-
-int audio_dec_enc_close()
+int audio_dec_enc_open(int (*dec_output)(void *priv, void *buf, int len), u32 code_type, u8 ai_type)
 {
-    if (!dec_enc) {
+    return audio_dec_enc_open_hdl(&dec_enc, dec_output, code_type, ai_type);
+}
+
+int audio_dec_ref_enc_open(int (*dec_output)(void *priv, void *buf, int len), u32 code_type, u8 ai_type)
+{
+    return audio_dec_enc_open_hdl(&dec_ref_enc, dec_output, code_type, ai_type);
+}
+
+
+static int audio_dec_enc_close_hdl(struct dec_enc_hdl **enc_slot)
+{
+    struct dec_enc_hdl *hdl = *enc_slot;
+
+    if (!hdl) {
         return -1;
     }
     printf("audio_dec_enc_close\n");
@@ -280,8 +313,8 @@ int audio_dec_enc_close()
 // #endif
 //     audio_adc_del_output_handler(&adc_hdl, &mic_enc->adc_output);
 // #endif
-    dec_enc_resume();
-    audio_encoder_close(&dec_enc->encoder);
+    dec_enc_resume_hdl(hdl);
+    audio_encoder_close(&hdl->encoder);
 
     /* if (encode_task) { */
     /* audio_encoder_task_del(encode_task); */
@@ -289,11 +322,21 @@ int audio_dec_enc_close()
     /* encode_task = NULL; */
     /* } */
 
-    free(dec_enc);
-    dec_enc = NULL;
+    free(hdl);
+    *enc_slot = NULL;
 
     printf("audio_dec_enc_close end\n");
     return 0;
+}
+
+int audio_dec_enc_close()
+{
+    return audio_dec_enc_close_hdl(&dec_enc);
+}
+
+int audio_dec_ref_enc_close()
+{
+    return audio_dec_enc_close_hdl(&dec_ref_enc);
 }
 
 #endif

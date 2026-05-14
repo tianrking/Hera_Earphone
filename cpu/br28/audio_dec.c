@@ -937,7 +937,7 @@ static void esco_fade_in(struct esco_dec_hdl *dec, s16 *data, int len)
 *			   后级即可。
 *********************************************************************
 */
-extern void adc_dec_output_handler(s16 *data, int len);
+extern void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels);
 static int esco_dec_output_handler(struct audio_decoder *decoder, s16 *buf, int size, void *priv)
 {
     int wlen = 0;
@@ -948,7 +948,7 @@ static int esco_dec_output_handler(struct audio_decoder *decoder, s16 *buf, int 
 
     /*非上次残留数据,进行后处理*/
     if (!dec->remain) {
-        adc_dec_output_handler(buf, size);
+        ae04_playback_pcm_output(buf, size, dec->decoder.fmt.sample_rate, dec->channels);
         spk_insert_data(buf, size >> 1);
 #if (defined(TCFG_PHONE_MESSAGE_ENABLE) && (TCFG_PHONE_MESSAGE_ENABLE))
         phone_message_call_api_esco_out_data(data, len);

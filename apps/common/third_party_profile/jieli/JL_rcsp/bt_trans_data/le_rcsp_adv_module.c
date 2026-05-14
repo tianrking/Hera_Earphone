@@ -368,7 +368,7 @@ void test_data_send_packet(void)
         opus_packages[opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE] = (u8)(ae04_dbg_counter ^ 0xFF);
         ae04_dbg_counter++;
 #else
-        if (opus_mic_buffer_sent) {
+        if (opus_mic_buffer_sent && opus_dec_buffer_sent) {
             return;
         }
         if (!opus_mic_buffer_sent) {
@@ -713,6 +713,7 @@ static u8 ae04_opus_ccc_enabled;
 static u8 ae04_opus_stream_started;
 static u8 ae04_opus_mic_started;
 static u8 ae04_opus_call_started;
+static u8 ae04_opus_ref_started;
 static int rec_enc_mic_output(void *priv, void *buf, int len)
 {
     static u32 mic_frame_cnt;
@@ -757,6 +758,9 @@ static int rec_enc_dec_output(void *priv, void *buf, int len)
     memcpy(opus_dec_buffer, send_buf, len);
     opus_dec_buffer_sent = false;
     dec_frame_cnt++;
+    if (opus_mode) {
+        can_send_now_wakeup();
+    }
     if (dec_frame_cnt <= 5 || ((dec_frame_cnt % 50) == 0)) {
         log_info("ae04 dec opus frame:%u len:%d head:%02x %02x %02x %02x",
                  dec_frame_cnt, len, send_buf[0], send_buf[1], send_buf[2], send_buf[3]);
@@ -775,11 +779,15 @@ static int rec_enc_dec_output(void *priv, void *buf, int len)
 
 extern int audio_mic_enc_open(int (*mic_output)(void *priv, void *buf, int len), u32 code_type, u8 ai_type);
 extern int audio_dec_enc_open(int (*dec_output)(void *priv, void *buf, int len), u32 code_type, u8 ai_type);
+extern int audio_dec_ref_enc_open(int (*dec_output)(void *priv, void *buf, int len), u32 code_type, u8 ai_type);
 extern int audio_mic_enc_close(void);
 extern int audio_dec_enc_close(void);
+extern int audio_dec_ref_enc_close(void);
 extern void adc_dec_output_handler(s16 *data, int len);
+extern void adc_dec_ref_output_handler(s16 *data, int len);
 extern void clk_set_en(u8 en);
 #define AUDIO_ENC_SYS_CLK_HZ     160 * 1000000L
+#define AE04_REF_TARGET_SAMPLE_RATE 16000
 static int sys_clk_before_rec;
 void mic_rec_clock_set(void)
 {
@@ -795,6 +803,33 @@ void mic_rec_clock_recover(void)
 
 static int ae04_opus_stream_start_for_call(void);
 
+static int ae04_opus_ref_stream_start(void)
+{
+    int dec_ret;
+
+    if (ae04_opus_ref_started) {
+        return 0;
+    }
+
+    dec_ret = audio_dec_ref_enc_open(rec_enc_dec_output, AUDIO_CODING_OPUS, 0 << 6);
+    if (dec_ret) {
+        log_info("ae04 opus ref open fail dec_ret:%d", dec_ret);
+        return -1;
+    }
+
+    ae04_opus_ref_started = 1;
+    log_info("ae04 opus ref open dec_ret:%d", dec_ret);
+    return 0;
+}
+
+static void ae04_opus_ref_stream_stop(void)
+{
+    if (ae04_opus_ref_started) {
+        audio_dec_ref_enc_close();
+        ae04_opus_ref_started = 0;
+    }
+}
+
 static void ae04_opus_stream_stop(void)
 {
     if (!ae04_opus_stream_started) {
@@ -803,6 +838,7 @@ static void ae04_opus_stream_stop(void)
         opus_dec_buffer_sent = true;
         ae04_opus_mic_started = 0;
         ae04_opus_call_started = 0;
+        ae04_opus_ref_stream_stop();
         return;
     }
 
@@ -816,6 +852,7 @@ static void ae04_opus_stream_stop(void)
     if (ae04_opus_call_started) {
         audio_dec_enc_close();
     }
+    ae04_opus_ref_stream_stop();
     mic_rec_clock_recover();
     ae04_opus_stream_started = 0;
     ae04_opus_mic_started = 0;
@@ -849,6 +886,7 @@ static int ae04_opus_stream_start(void)
 
     ae04_opus_stream_started = 1;
     ae04_opus_mic_started = 1;
+    ae04_opus_ref_stream_start();
     log_info("ae04 opus mic open mic_ret:%d", mic_ret);
     can_send_now_wakeup();
     return 0;
@@ -877,6 +915,7 @@ static int ae04_opus_stream_start_for_call(void)
 
     ae04_opus_stream_started = 1;
     ae04_opus_call_started = 1;
+    ae04_opus_ref_stream_start();
     log_info("ae04 opus call open dec_ret:%d", dec_ret);
     return 0;
 }
@@ -917,6 +956,65 @@ void ae04_call_pcm_output(s16 *data, u16 len)
             return;
         }
         adc_dec_output_handler(data, len);
+    }
+}
+
+void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels)
+{
+    static u32 ae04_ref_resample_phase;
+    static s16 ref_mono[320];
+    int frames;
+    int out_frames = 0;
+    u32 step;
+
+    if (!ae04_opus_ccc_enabled || !ae04_opus_ref_started || !data || len <= 0) {
+        return;
+    }
+
+    if (channels == 0) {
+        channels = 1;
+    }
+    if (sample_rate == 0) {
+        sample_rate = AE04_REF_TARGET_SAMPLE_RATE;
+    }
+
+    frames = (len >> 1) / channels;
+    if (frames <= 0) {
+        return;
+    }
+
+    if (sample_rate == AE04_REF_TARGET_SAMPLE_RATE) {
+        for (int i = 0; i < frames; i++) {
+            s32 sample = data[i * channels];
+            if (channels > 1) {
+                sample = (sample + data[i * channels + 1]) / 2;
+            }
+            ref_mono[out_frames++] = sample;
+            if (out_frames == (int)(sizeof(ref_mono) / sizeof(ref_mono[0]))) {
+                adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+                out_frames = 0;
+            }
+        }
+    } else {
+        step = ((u32)sample_rate << 16) / AE04_REF_TARGET_SAMPLE_RATE;
+        while ((ae04_ref_resample_phase >> 16) < (u32)frames) {
+            u32 idx = ae04_ref_resample_phase >> 16;
+            s32 sample = data[idx * channels];
+            if (channels > 1) {
+                sample = (sample + data[idx * channels + 1]) / 2;
+            }
+            ref_mono[out_frames++] = sample;
+            ae04_ref_resample_phase += step;
+            if (out_frames == (int)(sizeof(ref_mono) / sizeof(ref_mono[0]))) {
+                adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+                out_frames = 0;
+            }
+        }
+        ae04_ref_resample_phase -= ((u32)frames << 16);
+    }
+
+    if (out_frames) {
+        adc_dec_ref_output_handler(ref_mono, out_frames << 1);
     }
 }
 /* LISTING_END */

@@ -1389,7 +1389,9 @@ static int a2dp_dec_output_handler(struct audio_decoder *decoder, s16 *data, int
 {
     int wlen = 0;
     struct a2dp_dec_hdl *dec = container_of(decoder, struct a2dp_dec_hdl, decoder);
+    extern void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels);
 
+    ae04_playback_pcm_output(data, len, dec->sample_rate, dec->ch);
     return a2dp_stream_node_data_handler(&dec->stream_node[A2DP_NODE_DECODER], data, len);
 #if 0
     if (!dec->remain) {
