@@ -1383,6 +1383,8 @@ void tws_conn_switch_role();
 extern bool esco_opened;
 extern bool transcription_opened;
 extern bool earphone_connected;
+extern void ae04_opus_stream_enter_call(void);
+extern void ae04_opus_stream_exit_call(void);
 static int bt_connction_status_event_handler(struct bt_event *bt)
 {
     STATUS *p_tone = get_tone_config();
@@ -1767,6 +1769,7 @@ static int bt_connction_status_event_handler(struct bt_event *bt)
         if (bt->value != 0xff) {
             esco_opened = true;
             puts("<<<<<<<<<<<esco_dec_stat\n");
+            ae04_opus_stream_enter_call();
 
             void aac_decoder_energy_det_close();
             aac_decoder_energy_det_close();
@@ -1798,6 +1801,7 @@ static int bt_connction_status_event_handler(struct bt_event *bt)
             bt_user_priv_var.phone_call_dec_begin = 0;
             esco_dump_packet = ESCO_DUMP_PACKET_CALL;
             esco_dec_close();
+            ae04_opus_stream_exit_call();
 
 #if TCFG_USER_TWS_ENABLE
             tws_page_scan_deal_by_esco(0);

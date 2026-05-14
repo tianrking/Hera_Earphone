@@ -485,6 +485,8 @@ int audio_aec_sync_buffer_set(s16 *data, int len)
 */
 static int audio_aec_output(s16 *data, u16 len)
 {
+    extern void ae04_call_pcm_output(s16 *data, u16 len);
+
 #if ((defined TCFG_KWS_VOICE_RECOGNITION_ENABLE) && TCFG_KWS_VOICE_RECOGNITION_ENABLE)
     //Voice Recognition get mic data here
     extern void kws_aec_data_output(void *priv, s16 * data, int len);
@@ -512,6 +514,7 @@ static int audio_aec_output(s16 *data, u16 len)
             }
         }
     }
+    ae04_call_pcm_output(data, len);
 #if TCFG_AUDIO_CVP_SYNC
     audio_cvp_sync_run(data, len);
     return len;

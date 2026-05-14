@@ -113,9 +113,11 @@ static const uint8_t sm_min_key_size = 7;
 static const uint8_t connection_update_enable = 1; ///0--disable, 1--enable
 static uint8_t connection_update_cnt = 0; //
 static const struct conn_update_param_t connection_param_table[] = {
-    {6,  10, 0, 100},
-    {10, 14, 0, 100},
-    {14, 20, 0, 100},
+    // Keep the interval fast for audio, but use a longer supervision timeout.
+    // During HFP/eSCO calls, classic BT can steal enough slots to trip a 1s BLE timeout.
+    {6,  10, 0, 600},
+    {10, 14, 0, 600},
+    {14, 20, 0, 600},
     // {6,  12,  0, 400},
     // {16, 24, 16, 600},
     // {12, 28, 14, 600},//11
@@ -327,6 +329,26 @@ void test_data_send_packet(void)
     //     app_send_user_data(ATT_CHARACTERISTIC_ae03_01_VALUE_HANDLE, send_buffer, vaild_len, ATT_OP_AUTO_READ_CCC);
     // }
     if (opus_mode) {
+        static u32 ae04_notify_ok_cnt;
+        static u32 ae04_notify_fail_cnt;
+        static u8 ae04_esco_drop_cnt;
+        u8 *cur_opus_packet = opus_packages + opus_idx * OPUS_PACKAGE_BYTE;
+
+        if (get_esco_coder_busy_flag() && ae04_esco_drop_cnt) {
+            ae04_esco_drop_cnt--;
+            opus_mic_buffer_sent = true;
+            opus_dec_buffer_sent = true;
+            return;
+        }
+
+        if (vaild_len < OPUS_PACKAGE_BYTE) {
+            if (get_esco_coder_busy_flag()) {
+                opus_mic_buffer_sent = true;
+                opus_dec_buffer_sent = true;
+            }
+            return;
+        }
+
         memset(opus_packages + opus_idx * OPUS_PACKAGE_BYTE, 0, OPUS_PACKAGE_BYTE);
         opus_packages[opus_idx * OPUS_PACKAGE_BYTE] = vad_is_activate;
 #if AE04_SEND_DEBUG_PATTERN
@@ -367,11 +389,18 @@ void test_data_send_packet(void)
         opus_packages[(opus_idx + 1) * OPUS_PACKAGE_BYTE - DEBUG_BYTE] = send_index;
         int ret = app_send_user_data(
             ATT_CHARACTERISTIC_ae04_01_VALUE_HANDLE,
-            opus_packages + opus_idx * OPUS_PACKAGE_BYTE,
+            cur_opus_packet,
             OPUS_PACKAGE_BYTE,
             ATT_OP_AUTO_READ_CCC
         );
         if (ret == 0) {
+            ae04_notify_ok_cnt++;
+            if (ae04_notify_ok_cnt <= 5 || ((ae04_notify_ok_cnt % 50) == 0)) {
+                log_info("ae04 notify ok:%u seq:%u mic:%02x %02x %02x %02x",
+                         ae04_notify_ok_cnt, send_index,
+                         cur_opus_packet[1], cur_opus_packet[2],
+                         cur_opus_packet[3], cur_opus_packet[4]);
+            }
 #if !AE04_SEND_DEBUG_PATTERN
             opus_mic_buffer_sent = true;
             opus_dec_buffer_sent = true;
@@ -380,7 +409,19 @@ void test_data_send_packet(void)
             send_index++;
             failed_count = 0;
         } else {
-            log_info("send fail!!!");
+            ae04_notify_fail_cnt++;
+            if (ae04_notify_fail_cnt <= 5 || ((ae04_notify_fail_cnt % 20) == 0)) {
+                log_info("ae04 notify fail:%u ret:%d seq:%u mic_sent:%d con:%x esco:%d state:%d",
+                         ae04_notify_fail_cnt, ret, send_index, opus_mic_buffer_sent,
+                         con_handle, get_esco_coder_busy_flag(), get_ble_work_state());
+            }
+#if !AE04_SEND_DEBUG_PATTERN
+            if (get_esco_coder_busy_flag()) {
+                opus_mic_buffer_sent = true;
+                opus_dec_buffer_sent = true;
+                ae04_esco_drop_cnt = 5;
+            }
+#endif
             failed_count++;
         }
     } else {
@@ -542,6 +583,8 @@ static void cbk_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
 
         case HCI_EVENT_DISCONNECTION_COMPLETE:
             log_info("HCI_EVENT_DISCONNECTION_COMPLETE: %0x\n", packet[5]);
+            log_info("ae04 ble disconnect reason:%02x opus:%d esco:%d state:%d",
+                     packet[5], opus_mode, get_esco_coder_busy_flag(), get_ble_work_state());
             con_handle = 0;
 #if RCSP_ADV_MUSIC_INFO_ENABLE
             stop_get_music_timer(1);
@@ -666,13 +709,30 @@ u8 opus_mic_buffer[OPUS_PART_BYTE];
 u8 opus_dec_buffer[OPUS_PART_BYTE];
 bool opus_mic_buffer_sent;
 bool opus_dec_buffer_sent;
+static u8 ae04_opus_ccc_enabled;
+static u8 ae04_opus_stream_started;
+static u8 ae04_opus_mic_started;
+static u8 ae04_opus_call_started;
 static int rec_enc_mic_output(void *priv, void *buf, int len)
 {
+    static u32 mic_frame_cnt;
     bt_sniff_ready_clean();
 
     u8 *send_buf = (u8 *)buf;
+    if (len > OPUS_PART_BYTE) {
+        log_info("ae04 mic opus len too large:%d -> %d", len, OPUS_PART_BYTE);
+        len = OPUS_PART_BYTE;
+    }
     memcpy(opus_mic_buffer, send_buf, len);
     opus_mic_buffer_sent = false;
+    mic_frame_cnt++;
+    if (opus_mode) {
+        can_send_now_wakeup();
+    }
+    if (mic_frame_cnt <= 5 || ((mic_frame_cnt % 50) == 0)) {
+        log_info("ae04 mic opus frame:%u len:%d head:%02x %02x %02x %02x",
+                 mic_frame_cnt, len, send_buf[0], send_buf[1], send_buf[2], send_buf[3]);
+    }
 
     // int send_len = len;
 
@@ -686,11 +746,21 @@ static int rec_enc_mic_output(void *priv, void *buf, int len)
 }
 static int rec_enc_dec_output(void *priv, void *buf, int len)
 {
+    static u32 dec_frame_cnt;
     bt_sniff_ready_clean();
 
     u8 *send_buf = (u8 *)buf;
+    if (len > OPUS_PART_BYTE) {
+        log_info("ae04 dec opus len too large:%d -> %d", len, OPUS_PART_BYTE);
+        len = OPUS_PART_BYTE;
+    }
     memcpy(opus_dec_buffer, send_buf, len);
     opus_dec_buffer_sent = false;
+    dec_frame_cnt++;
+    if (dec_frame_cnt <= 5 || ((dec_frame_cnt % 50) == 0)) {
+        log_info("ae04 dec opus frame:%u len:%d head:%02x %02x %02x %02x",
+                 dec_frame_cnt, len, send_buf[0], send_buf[1], send_buf[2], send_buf[3]);
+    }
 
     // int send_len = len;
 
@@ -705,6 +775,9 @@ static int rec_enc_dec_output(void *priv, void *buf, int len)
 
 extern int audio_mic_enc_open(int (*mic_output)(void *priv, void *buf, int len), u32 code_type, u8 ai_type);
 extern int audio_dec_enc_open(int (*dec_output)(void *priv, void *buf, int len), u32 code_type, u8 ai_type);
+extern int audio_mic_enc_close(void);
+extern int audio_dec_enc_close(void);
+extern void adc_dec_output_handler(s16 *data, int len);
 extern void clk_set_en(u8 en);
 #define AUDIO_ENC_SYS_CLK_HZ     160 * 1000000L
 static int sys_clk_before_rec;
@@ -718,6 +791,133 @@ void mic_rec_clock_recover(void)
 {
     clk_set_en(1);
     clk_set("sys", sys_clk_before_rec);
+}
+
+static int ae04_opus_stream_start_for_call(void);
+
+static void ae04_opus_stream_stop(void)
+{
+    if (!ae04_opus_stream_started) {
+        opus_mode = false;
+        opus_mic_buffer_sent = true;
+        opus_dec_buffer_sent = true;
+        ae04_opus_mic_started = 0;
+        ae04_opus_call_started = 0;
+        return;
+    }
+
+    log_info("ae04 opus stream stop");
+    opus_mode = false;
+    opus_mic_buffer_sent = true;
+    opus_dec_buffer_sent = true;
+    if (ae04_opus_mic_started) {
+        audio_mic_enc_close();
+    }
+    if (ae04_opus_call_started) {
+        audio_dec_enc_close();
+    }
+    mic_rec_clock_recover();
+    ae04_opus_stream_started = 0;
+    ae04_opus_mic_started = 0;
+    ae04_opus_call_started = 0;
+}
+
+static int ae04_opus_stream_start(void)
+{
+    int mic_ret;
+
+    if (ae04_opus_stream_started) {
+        return 0;
+    }
+
+    if (get_esco_coder_busy_flag()) {
+        return ae04_opus_stream_start_for_call();
+    }
+
+    opus_mode = true;
+    opus_mic_buffer_sent = true;
+    opus_dec_buffer_sent = true;
+    mic_rec_clock_set();
+    mic_ret = audio_mic_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
+    if (mic_ret) {
+        log_info("ae04 opus mic open fail mic_ret:%d", mic_ret);
+        ae04_opus_stream_started = 1;
+        ae04_opus_mic_started = 1;
+        ae04_opus_stream_stop();
+        return -1;
+    }
+
+    ae04_opus_stream_started = 1;
+    ae04_opus_mic_started = 1;
+    log_info("ae04 opus mic open mic_ret:%d", mic_ret);
+    can_send_now_wakeup();
+    return 0;
+}
+
+static int ae04_opus_stream_start_for_call(void)
+{
+    int dec_ret;
+
+    if (ae04_opus_stream_started && ae04_opus_call_started) {
+        return 0;
+    }
+
+    opus_mode = true;
+    opus_mic_buffer_sent = true;
+    opus_dec_buffer_sent = true;
+    mic_rec_clock_set();
+    dec_ret = audio_dec_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
+    if (dec_ret) {
+        log_info("ae04 opus call open fail dec_ret:%d", dec_ret);
+        ae04_opus_stream_started = 1;
+        ae04_opus_call_started = 1;
+        ae04_opus_stream_stop();
+        return -1;
+    }
+
+    ae04_opus_stream_started = 1;
+    ae04_opus_call_started = 1;
+    log_info("ae04 opus call open dec_ret:%d", dec_ret);
+    return 0;
+}
+
+void ae04_opus_stream_enter_call(void)
+{
+    if (!ae04_opus_ccc_enabled) {
+        return;
+    }
+
+    log_info("ae04 opus enter call ccc:%d started:%d mic:%d call:%d",
+             ae04_opus_ccc_enabled, ae04_opus_stream_started,
+             ae04_opus_mic_started, ae04_opus_call_started);
+    ae04_opus_stream_stop();
+    ae04_opus_stream_start_for_call();
+}
+
+void ae04_opus_stream_exit_call(void)
+{
+    if (!ae04_opus_ccc_enabled) {
+        return;
+    }
+
+    log_info("ae04 opus exit call ccc:%d started:%d mic:%d call:%d",
+             ae04_opus_ccc_enabled, ae04_opus_stream_started,
+             ae04_opus_mic_started, ae04_opus_call_started);
+    ae04_opus_stream_stop();
+    ae04_opus_stream_start();
+}
+
+void ae04_call_pcm_output(s16 *data, u16 len)
+{
+    static u8 ae04_call_pcm_div;
+
+    if (ae04_opus_ccc_enabled && ae04_opus_call_started) {
+        ae04_call_pcm_div++;
+        if (ae04_call_pcm_div % 2) {
+            return;
+        }
+        adc_dec_output_handler(data, len);
+    }
 }
 /* LISTING_END */
 /*
@@ -781,17 +981,12 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
         log_info("\n------write ccc:%04x, %02x\n", handle, buffer[0]);
         att_set_ccc_config(handle, buffer[0]);
         if (buffer[0]) {
-            opus_mode = true;
-            opus_mic_buffer_sent = true;
-            opus_dec_buffer_sent = true;
-            mic_rec_clock_set();
-            audio_mic_enc_open(rec_enc_mic_output, AUDIO_CODING_OPUS, 0 << 6);
-            audio_dec_enc_open(rec_enc_dec_output, AUDIO_CODING_OPUS, 0 << 6);
-            can_send_now_wakeup();
+            ae04_opus_ccc_enabled = 1;
+            ae04_opus_stream_start();
         } else {
-            audio_mic_enc_close();
-            audio_dec_enc_close();
-            mic_rec_clock_recover();
+            log_info("ae04 opus close");
+            ae04_opus_ccc_enabled = 0;
+            ae04_opus_stream_stop();
         }
         break;
 
@@ -831,7 +1026,11 @@ static int app_send_user_data(u16 handle, u8 *data, u16 len, u8 handle_type)
     }
 
     if (ret) {
-        log_info("app_send_fail:%d !!!!!!\n", ret);
+        static u32 send_fail_log_cnt;
+        send_fail_log_cnt++;
+        if (!get_esco_coder_busy_flag() || send_fail_log_cnt <= 5 || ((send_fail_log_cnt % 50) == 0)) {
+            log_info("app_send_fail:%d !!!!!!\n", ret);
+        }
     }
     return ret;
 }
@@ -1075,6 +1274,11 @@ static int set_adv_enable(void *priv, u32 en)
     ble_state_e next_state, cur_state;
 
     if (!adv_ctrl_en && en) {
+        return APP_BLE_OPERATION_ERROR;
+    }
+
+    if (en && get_esco_coder_busy_flag()) {
+        log_info("skip ble adv enable while esco busy");
         return APP_BLE_OPERATION_ERROR;
     }
 
