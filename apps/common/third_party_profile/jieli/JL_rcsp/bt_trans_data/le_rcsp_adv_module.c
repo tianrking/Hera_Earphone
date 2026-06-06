@@ -714,6 +714,10 @@ static u8 ae04_opus_stream_started;
 static u8 ae04_opus_mic_started;
 static u8 ae04_opus_call_started;
 static u8 ae04_opus_ref_started;
+#define AE04_CALL_MIX_MAX_POINTS 320
+static s16 ae04_call_ref_pcm[AE04_CALL_MIX_MAX_POINTS];
+static u16 ae04_call_ref_points;
+static s16 ae04_call_mix_pcm[AE04_CALL_MIX_MAX_POINTS];
 static int rec_enc_mic_output(void *priv, void *buf, int len)
 {
     static u32 mic_frame_cnt;
@@ -886,7 +890,6 @@ static int ae04_opus_stream_start(void)
 
     ae04_opus_stream_started = 1;
     ae04_opus_mic_started = 1;
-    ae04_opus_ref_stream_start();
     log_info("ae04 opus mic open mic_ret:%d", mic_ret);
     can_send_now_wakeup();
     return 0;
@@ -915,7 +918,6 @@ static int ae04_opus_stream_start_for_call(void)
 
     ae04_opus_stream_started = 1;
     ae04_opus_call_started = 1;
-    ae04_opus_ref_stream_start();
     log_info("ae04 opus call open dec_ret:%d", dec_ret);
     return 0;
 }
@@ -949,13 +951,24 @@ void ae04_opus_stream_exit_call(void)
 void ae04_call_pcm_output(s16 *data, u16 len)
 {
     static u8 ae04_call_pcm_div;
+    int points = len >> 1;
 
     if (ae04_opus_ccc_enabled && ae04_opus_call_started) {
         ae04_call_pcm_div++;
         if (ae04_call_pcm_div % 2) {
             return;
         }
-        adc_dec_output_handler(data, len);
+        if (points > AE04_CALL_MIX_MAX_POINTS) {
+            points = AE04_CALL_MIX_MAX_POINTS;
+        }
+        for (int i = 0; i < points; i++) {
+            s32 sample = data[i];
+            if (i < ae04_call_ref_points) {
+                sample = (sample + ae04_call_ref_pcm[i]) / 2;
+            }
+            ae04_call_mix_pcm[i] = sample;
+        }
+        adc_dec_output_handler(ae04_call_mix_pcm, points << 1);
     }
 }
 
@@ -967,7 +980,11 @@ void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels)
     int out_frames = 0;
     u32 step;
 
-    if (!ae04_opus_ccc_enabled || !ae04_opus_ref_started || !data || len <= 0) {
+    if (!ae04_opus_ccc_enabled || !data || len <= 0) {
+        return;
+    }
+
+    if (!ae04_opus_ref_started && !ae04_opus_call_started) {
         return;
     }
 
@@ -991,7 +1008,12 @@ void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels)
             }
             ref_mono[out_frames++] = sample;
             if (out_frames == (int)(sizeof(ref_mono) / sizeof(ref_mono[0]))) {
-                adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+                if (ae04_opus_call_started) {
+                    memcpy(ae04_call_ref_pcm, ref_mono, out_frames << 1);
+                    ae04_call_ref_points = out_frames;
+                } else {
+                    adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+                }
                 out_frames = 0;
             }
         }
@@ -1006,7 +1028,12 @@ void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels)
             ref_mono[out_frames++] = sample;
             ae04_ref_resample_phase += step;
             if (out_frames == (int)(sizeof(ref_mono) / sizeof(ref_mono[0]))) {
-                adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+                if (ae04_opus_call_started) {
+                    memcpy(ae04_call_ref_pcm, ref_mono, out_frames << 1);
+                    ae04_call_ref_points = out_frames;
+                } else {
+                    adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+                }
                 out_frames = 0;
             }
         }
@@ -1014,7 +1041,12 @@ void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels)
     }
 
     if (out_frames) {
-        adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+        if (ae04_opus_call_started) {
+            memcpy(ae04_call_ref_pcm, ref_mono, out_frames << 1);
+            ae04_call_ref_points = out_frames;
+        } else {
+            adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+        }
     }
 }
 /* LISTING_END */
