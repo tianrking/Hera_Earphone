@@ -1,8 +1,80 @@
-# Hera-Firmware-JL701N
+# Hera JL7016 Earphone Firmware
 
-## Build commands
+Firmware for the Hera earphone prototype based on the Jieli AC701N/JL7016
+platform. This branch focuses on low-power BLE OPUS audio transport and phone
+call audio verification.
 
-Run the commands from the repository root, for example `F:\Hera_Earphone`.
+<p>
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-Jieli%20AC701N%20%2F%20JL7016-263238?style=for-the-badge">
+  <img alt="Language" src="https://img.shields.io/badge/Language-C-00599C?style=for-the-badge&logo=c&logoColor=white">
+  <img alt="Transport" src="https://img.shields.io/badge/Transport-BLE%20GATT-0082FC?style=for-the-badge&logo=bluetooth&logoColor=white">
+  <img alt="Audio" src="https://img.shields.io/badge/Audio-OPUS%2016k-00A67E?style=for-the-badge">
+  <img alt="Profile" src="https://img.shields.io/badge/Profile-HFP%20%2B%20eSCO-6D4C41?style=for-the-badge">
+</p>
+
+## Current Audio Feature
+
+The AE04 BLE notification stream now carries two OPUS audio frames in one
+84-byte packet:
+
+```text
+byte 0      : VAD flag
+byte 1-40   : local mic / uplink-side OPUS frame
+byte 41-80  : peer / HFP downlink-side OPUS frame
+byte 81     : sequence number
+byte 82-83  : reserved / optional length bytes
+```
+
+Expected behavior:
+
+| Mode | Bytes 1-40 | Bytes 41-80 |
+| --- | --- | --- |
+| Normal BLE audio | Local mic OPUS | Usually empty / not used |
+| Phone call | Local call mic/AEC OPUS | Remote caller HFP/eSCO OPUS |
+
+The matching Android debug app can select either `Play Mic 1-40` or
+`Play Peer 41-80` to verify both halves of the packet.
+
+## Technical Implementation Notes
+
+The main implementation lives in:
+
+```text
+apps/common/third_party_profile/jieli/JL_rcsp/bt_trans_data/le_rcsp_adv_module.c
+```
+
+Important paths:
+
+| Path | Purpose |
+| --- | --- |
+| `rec_enc_mic_output()` | Stores encoded local mic/AEC OPUS frames into `opus_mic_buffer` |
+| `rec_enc_dec_output()` | Stores encoded peer/downlink OPUS frames into `opus_dec_buffer` |
+| `ae04_call_pcm_output()` | Feeds call AEC/uplink PCM into the local OPUS encoder |
+| `ae04_playback_pcm_output()` | Resamples HFP/eSCO playback PCM to 16 kHz mono and feeds the peer encoder |
+| `test_data_send_packet()` | Packs AE04 notify payload and sends it through BLE |
+
+Current call mode uses:
+
+```c
+#define AE04_CALL_DUAL_STREAM  1
+```
+
+When enabled, phone-call AE04 packets wait until both local and peer OPUS frames
+are ready before notify, so Android receives a paired 84-byte packet.
+
+Firmware logs to look for during call testing:
+
+```text
+ae04 opus enter call
+ae04 opus call open mic_ret:0 peer_ret:0
+ae04 mic opus frame:...
+ae04 peer opus frame:...
+ae04 notify ok:... src:mic+peer ...
+```
+
+## Build Commands
+
+Run commands from the repository root, for example `F:\Hera_Earphone`.
 
 Recommended project-local build:
 
@@ -17,14 +89,15 @@ Clean build outputs:
 ```
 
 This uses the tool wrappers shipped in `tools\utils`, including `make.exe`,
-`mkdir_win.exe`, `fixbat.exe`, and `rm.exe`. You can also open a prepared cmd
-prompt first:
+`mkdir_win.exe`, `fixbat.exe`, and `rm.exe`.
+
+You can also open a prepared command prompt first:
 
 ```powershell
 tools\make_prompt.bat
 ```
 
-Then run this inside the opened cmd window:
+Then run this in the opened `cmd` window:
 
 ```cmd
 make all
@@ -43,65 +116,21 @@ The generated firmware package is usually:
 cpu\br28\tools\download\earphone\update.ufw
 ```
 
-基于Buddie项目二次开发的Hera耳机固件，适用于基于杰理AC701N芯片的开发板。本固件解决方案专为**低功耗实时音频传输**而设计，并内置高效的音频压缩模块。
+## Test Flow
 
-## 📚 杰理官方文档
+1. Build the firmware with `.vscode\winmk.bat all`.
+2. Flash `cpu\br28\tools\download\earphone\update.ufw`.
+3. Connect with the Android debug app.
+4. Subscribe to AE04 notify.
+5. In normal mode, verify `Play Mic 1-40`.
+6. During a phone call, verify both:
+   - `Play Mic 1-40` for local call-side audio.
+   - `Play Peer 41-80` for remote caller audio.
+7. Check serial logs for `src:mic+peer`.
 
-### AC701N 芯片 Datasheet
-包含芯片的电气特性、引脚定义、功能模块等核心硬件信息。(通常包含在 SDK 包中或需从杰理获取)
+## Traceability
 
-### AC701N SDK 开发手册
-详细说明 SDK 架构、API 接口、外设驱动、BLE 协议栈使用、开发流程等。(SDK 包中最重要的文档)
-
-请查看仓库根目录下的 doc/html 文件夹获取详细的项目文档。
-
-## 🛠 Hera项目新增功能
-
-基于Buddie二次开发，新增以下功能：
-
-### 获取麦克风数据
-- 实时获取麦克风输入数据
-- 支持多通道麦克风采集
-
-### 获取扬声器数据
-- 获取音频输出数据
-- 支持音频数据监控和分析
-
-### 新建的任务进程
-- **pca**: 主成分分析任务进程
-- **vad_task**: 语音活动检测任务进程
-
-### 数据处理及压缩
-- 音频数据实时处理
-- 高效数据压缩算法
-- 优化传输带宽
-
-### 快速傅里叶变换
-- 音频频谱分析
-- 实时FFT处理
-- 频域特征提取
-
-### 蓝牙数据发送
-#### 通过BLE进行发送数据
-- 低功耗蓝牙传输
-- 自定义BLE服务
-- 数据包优化传输
-
-#### 通过SPP进行发送数据
-- 串口端口协议传输
-- 经典蓝牙SPP配置
-- 高速数据传输通道
-
-### 其他小功能
-#### 修改经典蓝牙/BLE广播名称
-- 动态修改设备名称
-- 支持多语言广播名称
-
-#### 调整/锁定芯片主频
-- 动态频率调整
-- 性能与功耗平衡
-
-#### 修改BLE characteristics
-- 自定义BLE特征值
-- 服务配置优化
-- 数据格式定义
+This repository keeps the historical commit chain for firmware bring-up. See
+[CHANGELOG.md](CHANGELOG.md) for a maintained, human-readable record of each
+change from the initial project import through the current AE04 dual-stream call
+audio implementation.
