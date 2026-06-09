@@ -308,6 +308,9 @@ extern u8 opus_mic_buffer[OPUS_PART_BYTE];
 extern u8 opus_dec_buffer[OPUS_PART_BYTE];
 extern bool opus_mic_buffer_sent;
 extern bool opus_dec_buffer_sent;
+static u8 ae04_opus_dual_payload_enabled(void);
+static const char *ae04_opus_source_name(u8 source);
+static const char *ae04_notify_source_name(void);
 
 extern u8 vad_is_activate;
 extern int package_done_offset;
@@ -368,8 +371,14 @@ void test_data_send_packet(void)
         opus_packages[opus_idx * OPUS_PACKAGE_BYTE + 1 + OPUS_PART_BYTE] = (u8)(ae04_dbg_counter ^ 0xFF);
         ae04_dbg_counter++;
 #else
-        if (opus_mic_buffer_sent && opus_dec_buffer_sent) {
-            return;
+        if (ae04_opus_dual_payload_enabled()) {
+            if (opus_mic_buffer_sent || opus_dec_buffer_sent) {
+                return;
+            }
+        } else {
+            if (opus_mic_buffer_sent && opus_dec_buffer_sent) {
+                return;
+            }
         }
         if (!opus_mic_buffer_sent) {
             memcpy(
@@ -396,8 +405,8 @@ void test_data_send_packet(void)
         if (ret == 0) {
             ae04_notify_ok_cnt++;
             if (ae04_notify_ok_cnt <= 5 || ((ae04_notify_ok_cnt % 50) == 0)) {
-                log_info("ae04 notify ok:%u seq:%u mic:%02x %02x %02x %02x",
-                         ae04_notify_ok_cnt, send_index,
+                log_info("ae04 notify ok:%u src:%s seq:%u payload:%02x %02x %02x %02x",
+                         ae04_notify_ok_cnt, ae04_notify_source_name(), send_index,
                          cur_opus_packet[1], cur_opus_packet[2],
                          cur_opus_packet[3], cur_opus_packet[4]);
             }
@@ -714,10 +723,44 @@ static u8 ae04_opus_stream_started;
 static u8 ae04_opus_mic_started;
 static u8 ae04_opus_call_started;
 static u8 ae04_opus_ref_started;
+#define AE04_OPUS_SRC_MIC      0
+#define AE04_OPUS_SRC_PEER     1
+#define AE04_OPUS_SRC_MIX      2
+#define AE04_CALL_DUAL_STREAM  1
 #define AE04_CALL_MIX_MAX_POINTS 320
+#if !AE04_CALL_DUAL_STREAM
 static s16 ae04_call_ref_pcm[AE04_CALL_MIX_MAX_POINTS];
 static u16 ae04_call_ref_points;
 static s16 ae04_call_mix_pcm[AE04_CALL_MIX_MAX_POINTS];
+#endif
+
+static u8 ae04_opus_dual_payload_enabled(void)
+{
+    return ae04_opus_call_started && AE04_CALL_DUAL_STREAM;
+}
+
+static const char *ae04_opus_source_name(u8 source)
+{
+    switch (source) {
+    case AE04_OPUS_SRC_PEER:
+        return "peer";
+    case AE04_OPUS_SRC_MIX:
+        return "mix";
+    case AE04_OPUS_SRC_MIC:
+    default:
+        return "mic";
+    }
+}
+
+static const char *ae04_notify_source_name(void)
+{
+    if (ae04_opus_dual_payload_enabled()) {
+        return "mic+peer";
+    }
+
+    return ae04_opus_source_name(AE04_OPUS_SRC_MIC);
+}
+
 static int rec_enc_mic_output(void *priv, void *buf, int len)
 {
     static u32 mic_frame_cnt;
@@ -725,7 +768,8 @@ static int rec_enc_mic_output(void *priv, void *buf, int len)
 
     u8 *send_buf = (u8 *)buf;
     if (len > OPUS_PART_BYTE) {
-        log_info("ae04 mic opus len too large:%d -> %d", len, OPUS_PART_BYTE);
+        log_info("ae04 %s opus len too large:%d -> %d",
+                 ae04_opus_source_name(AE04_OPUS_SRC_MIC), len, OPUS_PART_BYTE);
         len = OPUS_PART_BYTE;
     }
     memcpy(opus_mic_buffer, send_buf, len);
@@ -735,8 +779,9 @@ static int rec_enc_mic_output(void *priv, void *buf, int len)
         can_send_now_wakeup();
     }
     if (mic_frame_cnt <= 5 || ((mic_frame_cnt % 50) == 0)) {
-        log_info("ae04 mic opus frame:%u len:%d head:%02x %02x %02x %02x",
-                 mic_frame_cnt, len, send_buf[0], send_buf[1], send_buf[2], send_buf[3]);
+        log_info("ae04 %s opus frame:%u len:%d head:%02x %02x %02x %02x",
+                 ae04_opus_source_name(AE04_OPUS_SRC_MIC), mic_frame_cnt, len,
+                 send_buf[0], send_buf[1], send_buf[2], send_buf[3]);
     }
 
     // int send_len = len;
@@ -756,7 +801,8 @@ static int rec_enc_dec_output(void *priv, void *buf, int len)
 
     u8 *send_buf = (u8 *)buf;
     if (len > OPUS_PART_BYTE) {
-        log_info("ae04 dec opus len too large:%d -> %d", len, OPUS_PART_BYTE);
+        log_info("ae04 %s opus len too large:%d -> %d",
+                 ae04_opus_source_name(AE04_OPUS_SRC_PEER), len, OPUS_PART_BYTE);
         len = OPUS_PART_BYTE;
     }
     memcpy(opus_dec_buffer, send_buf, len);
@@ -766,8 +812,9 @@ static int rec_enc_dec_output(void *priv, void *buf, int len)
         can_send_now_wakeup();
     }
     if (dec_frame_cnt <= 5 || ((dec_frame_cnt % 50) == 0)) {
-        log_info("ae04 dec opus frame:%u len:%d head:%02x %02x %02x %02x",
-                 dec_frame_cnt, len, send_buf[0], send_buf[1], send_buf[2], send_buf[3]);
+        log_info("ae04 %s opus frame:%u len:%d head:%02x %02x %02x %02x",
+                 ae04_opus_source_name(AE04_OPUS_SRC_PEER), dec_frame_cnt, len,
+                 send_buf[0], send_buf[1], send_buf[2], send_buf[3]);
     }
 
     // int send_len = len;
@@ -861,6 +908,9 @@ static void ae04_opus_stream_stop(void)
     ae04_opus_stream_started = 0;
     ae04_opus_mic_started = 0;
     ae04_opus_call_started = 0;
+#if !AE04_CALL_DUAL_STREAM
+    ae04_call_ref_points = 0;
+#endif
 }
 
 static int ae04_opus_stream_start(void)
@@ -898,6 +948,7 @@ static int ae04_opus_stream_start(void)
 static int ae04_opus_stream_start_for_call(void)
 {
     int dec_ret;
+    int ref_ret;
 
     if (ae04_opus_stream_started && ae04_opus_call_started) {
         return 0;
@@ -918,7 +969,17 @@ static int ae04_opus_stream_start_for_call(void)
 
     ae04_opus_stream_started = 1;
     ae04_opus_call_started = 1;
+#if AE04_CALL_DUAL_STREAM
+    ref_ret = ae04_opus_ref_stream_start();
+    if (ref_ret) {
+        log_info("ae04 opus call ref open fail ref_ret:%d", ref_ret);
+        ae04_opus_stream_stop();
+        return -1;
+    }
+    log_info("ae04 opus call open mic_ret:%d peer_ret:%d", dec_ret, ref_ret);
+#else
     log_info("ae04 opus call open dec_ret:%d", dec_ret);
+#endif
     return 0;
 }
 
@@ -950,6 +1011,14 @@ void ae04_opus_stream_exit_call(void)
 
 void ae04_call_pcm_output(s16 *data, u16 len)
 {
+#if AE04_CALL_DUAL_STREAM
+    if (ae04_opus_ccc_enabled && ae04_opus_call_started) {
+        if (len > (AE04_CALL_MIX_MAX_POINTS << 1)) {
+            len = AE04_CALL_MIX_MAX_POINTS << 1;
+        }
+        adc_dec_output_handler(data, len);
+    }
+#else
     static u8 ae04_call_pcm_div;
     int points = len >> 1;
 
@@ -970,6 +1039,7 @@ void ae04_call_pcm_output(s16 *data, u16 len)
         }
         adc_dec_output_handler(ae04_call_mix_pcm, points << 1);
     }
+#endif
 }
 
 void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels)
@@ -1009,8 +1079,12 @@ void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels)
             ref_mono[out_frames++] = sample;
             if (out_frames == (int)(sizeof(ref_mono) / sizeof(ref_mono[0]))) {
                 if (ae04_opus_call_started) {
+#if AE04_CALL_DUAL_STREAM
+                    adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+#else
                     memcpy(ae04_call_ref_pcm, ref_mono, out_frames << 1);
                     ae04_call_ref_points = out_frames;
+#endif
                 } else {
                     adc_dec_ref_output_handler(ref_mono, out_frames << 1);
                 }
@@ -1029,8 +1103,12 @@ void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels)
             ae04_ref_resample_phase += step;
             if (out_frames == (int)(sizeof(ref_mono) / sizeof(ref_mono[0]))) {
                 if (ae04_opus_call_started) {
+#if AE04_CALL_DUAL_STREAM
+                    adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+#else
                     memcpy(ae04_call_ref_pcm, ref_mono, out_frames << 1);
                     ae04_call_ref_points = out_frames;
+#endif
                 } else {
                     adc_dec_ref_output_handler(ref_mono, out_frames << 1);
                 }
@@ -1042,8 +1120,12 @@ void ae04_playback_pcm_output(s16 *data, int len, u16 sample_rate, u8 channels)
 
     if (out_frames) {
         if (ae04_opus_call_started) {
+#if AE04_CALL_DUAL_STREAM
+            adc_dec_ref_output_handler(ref_mono, out_frames << 1);
+#else
             memcpy(ae04_call_ref_pcm, ref_mono, out_frames << 1);
             ae04_call_ref_points = out_frames;
+#endif
         } else {
             adc_dec_ref_output_handler(ref_mono, out_frames << 1);
         }

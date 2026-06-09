@@ -1,5 +1,48 @@
 # Hera-Firmware-JL701N
 
+## Build commands
+
+Run the commands from the repository root, for example `F:\Hera_Earphone`.
+
+Recommended project-local build:
+
+```powershell
+.vscode\winmk.bat all
+```
+
+Clean build outputs:
+
+```powershell
+.vscode\winmk.bat clean
+```
+
+This uses the tool wrappers shipped in `tools\utils`, including `make.exe`,
+`mkdir_win.exe`, `fixbat.exe`, and `rm.exe`. You can also open a prepared cmd
+prompt first:
+
+```powershell
+tools\make_prompt.bat
+```
+
+Then run this inside the opened cmd window:
+
+```cmd
+make all
+```
+
+Fallback build command, useful when calling the Jieli make executable directly
+and `mkdir_win.exe` is not in `PATH`:
+
+```powershell
+C:\JL\mc\bin\make.exe all MKDIR="powershell -NoProfile -Command 'New-Item -ItemType Directory -Force -Path `$args[0] | Out-Null'"
+```
+
+The generated firmware package is usually:
+
+```text
+cpu\br28\tools\download\earphone\update.ufw
+```
+
 基于Buddie项目二次开发的Hera耳机固件，适用于基于杰理AC701N芯片的开发板。本固件解决方案专为**低功耗实时音频传输**而设计，并内置高效的音频压缩模块。
 
 ## 📚 杰理官方文档

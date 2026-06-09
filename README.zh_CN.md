@@ -1,5 +1,49 @@
 # Hera-Firmware-JL701N
 
+## 编译命令
+
+以下命令都在仓库根目录执行，例如 `F:\Hera_Earphone`。
+
+推荐使用项目自带的编译入口：
+
+```powershell
+.vscode\winmk.bat all
+```
+
+清理编译输出：
+
+```powershell
+.vscode\winmk.bat clean
+```
+
+这个入口会自动把 `tools\utils` 加到 `PATH`，使用项目自带的
+`make.exe`、`mkdir_win.exe`、`fixbat.exe`、`rm.exe` 等工具。
+
+也可以先打开项目准备好的命令行：
+
+```powershell
+tools\make_prompt.bat
+```
+
+然后在弹出的 `cmd` 窗口里执行：
+
+```cmd
+make all
+```
+
+如果直接调用杰理工具链里的 `make.exe`，并且当前环境找不到
+`mkdir_win.exe`，可以使用下面的兜底命令：
+
+```powershell
+C:\JL\mc\bin\make.exe all MKDIR="powershell -NoProfile -Command 'New-Item -ItemType Directory -Force -Path `$args[0] | Out-Null'"
+```
+
+生成的固件包通常在：
+
+```text
+cpu\br28\tools\download\earphone\update.ufw
+```
+
 
 基于Buddie项目二次开发的Hera耳机固件，适用于基于杰理AC701N芯片的开发板。该固件解决方案专为**低功耗实时音频传输**而设计，并内置高效的音频压缩模块。
 
